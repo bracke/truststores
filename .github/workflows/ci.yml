@@ -72,6 +72,18 @@ jobs:
             ./bin/truststores_tests
           fi
 
+      # The release gate: manifest pins, required documents, a tracked build
+      # tree, and an application's environment variable in the library. Linux
+      # only -- it checks the repository, not per-host behaviour, which the
+      # matrix above is for.
+      - name: Release checklist
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: truststores/check_truststores
+        run: |
+          alr --non-interactive build
+          ./bin/check_truststores
+
       # Reading is the half a runner can check, and it is worth checking that it
       # returns something on each host rather than only that it compiles.
       - name: Report what this runner trusts
