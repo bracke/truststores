@@ -4,6 +4,11 @@
 /tests/alire/
 /tests/config/
 
+/check_truststores/alire/
+/check_truststores/config/
+/check_truststores/obj/
+/check_truststores/bin/
+
 # Build outputs
 /obj/
 /lib/

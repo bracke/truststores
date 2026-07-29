@@ -120,6 +120,17 @@ answer instead: a caller pointing at one is not asking about the machine.
 Not yet: reading the NSS and Java stores has only run on Linux -- the system
 store is the one CI exercises everywhere.
 
+## Release gate
+
+```
+cd check_truststores && alr build && ./bin/check_truststores
+```
+
+Every rule in it is there because something went wrong once: a build tree was
+committed and came within a command of being published, the documentation
+claimed one host had read a store when CI had already read three, and a library
+that starts reading its caller's environment variables has stopped being one.
+
 ## Validation
 
 The mutating side cannot be proved by a test suite: it needs a real store on a
