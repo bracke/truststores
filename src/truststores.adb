@@ -270,6 +270,14 @@ package body Truststores is
    function NSS_Database return String;
    function Detect_Linux_Backend return Linux_System_Backend;
 
+   Max_Java_Keystores : constant := 8;
+   type Java_Keystore_List is
+     array (1 .. Max_Java_Keystores) of Unbounded_String;
+
+   procedure Java_Keystores
+     (Keystores : out Java_Keystore_List;
+      Count     : out Natural);
+
    Max_NSS_Databases : constant := 16;
    type NSS_Database_List is
      array (1 .. Max_NSS_Databases) of Unbounded_String;
@@ -378,7 +386,13 @@ package body Truststores is
             if Locate ("keytool") = "" then
                return Tool_Missing;
             else
-               return Available;
+               declare
+                  Keystores : Java_Keystore_List;
+                  Count     : Natural;
+               begin
+                  Java_Keystores (Keystores, Count);
+                  return (if Count = 0 then Not_Installed else Available);
+               end;
             end if;
       end case;
    end Probe;
@@ -772,6 +786,109 @@ package body Truststores is
          return "";
    end Default_Java_Keystore;
 
+   --  Every Java keystore on this host.
+   --
+   --  A machine with two JDKs has two stores, and an anchor in one is not in the
+   --  other: java-17 does not read java-21's cacerts. Installing into whichever
+   --  keytool happens to be first on PATH leaves the rest untrusting, and says
+   --  nothing about it.
+   --
+   --  Deduplicated by resolved path, because a distribution fills that directory
+   --  with aliases: default-java and java-1.21.0-openjdk-amd64 are both
+   --  java-21-openjdk-amd64, and installing three times into one store would
+   --  report three successes for one anchor.
+   procedure Java_Keystores
+     (Keystores : out Java_Keystore_List;
+      Count     : out Natural)
+   is
+      use type Hostkit.Host.Kind;
+
+      procedure Add (Path : String) is
+         Resolved : constant String :=
+           (if Path = "" then "" else Hostkit.Fs.Real_Path (Path));
+         Final    : constant String := (if Resolved = "" then Path else Resolved);
+      begin
+         if Final = ""
+           or else Count >= Max_Java_Keystores
+           or else not Ada.Directories.Exists (Final)
+         then
+            return;
+         end if;
+
+         for Index in 1 .. Count loop
+            if Ada.Strings.Unbounded.To_String (Keystores (Index)) = Final then
+               return;
+            end if;
+         end loop;
+
+         Count := Count + 1;
+         Keystores (Count) := Ada.Strings.Unbounded.To_Unbounded_String (Final);
+      end Add;
+
+      --  Every <root>/*/lib/security/cacerts under a conventional JVM directory.
+      procedure Add_Under (Root : String; Suffix : String) is
+         Search : Ada.Directories.Search_Type;
+         Item   : Ada.Directories.Directory_Entry_Type;
+      begin
+         if Root = "" or else not Ada.Directories.Exists (Root) then
+            return;
+         end if;
+
+         Ada.Directories.Start_Search
+           (Search,
+            Directory => Root,
+            Pattern   => "*",
+            Filter    =>
+              [Ada.Directories.Directory     => True,
+               Ada.Directories.Ordinary_File => False,
+               Ada.Directories.Special_File  => False]);
+         while Ada.Directories.More_Entries (Search) loop
+            Ada.Directories.Get_Next_Entry (Search, Item);
+            declare
+               Name : constant String := Ada.Directories.Simple_Name (Item);
+            begin
+               if Name /= "." and then Name /= ".." then
+                  Add (Ada.Directories.Full_Name (Item) & Suffix);
+               end if;
+            end;
+         end loop;
+         Ada.Directories.End_Search (Search);
+      exception
+         when others =>
+            null;
+      end Add_Under;
+
+      Chosen : constant String :=
+        Setting (Set_Java_Keystore, Java_Variable, "TRUSTSTORES_JAVA_KEYSTORE");
+   begin
+      Keystores := [others => Ada.Strings.Unbounded.Null_Unbounded_String];
+      Count := 0;
+
+      --  A named keystore is the whole answer: a caller pointing at one is not
+      --  asking for every JDK on the machine.
+      if Chosen /= "" then
+         Count := 1;
+         Keystores (1) := Ada.Strings.Unbounded.To_Unbounded_String (Chosen);
+         return;
+      end if;
+
+      Add (Default_Java_Keystore (Locate ("keytool")));
+
+      case Hostkit.Host.Current is
+         when Hostkit.Host.MacOS =>
+            Add_Under
+              ("/Library/Java/JavaVirtualMachines",
+               "/Contents/Home/lib/security/cacerts");
+         when Hostkit.Host.Windows =>
+            Add_Under ("C:\Program Files\Java", "\lib\security\cacerts");
+            Add_Under
+              ("C:\Program Files\Eclipse Adoptium", "\lib\security\cacerts");
+         when others =>
+            Add_Under ("/usr/lib/jvm", "/lib/security/cacerts");
+            Add_Under ("/usr/java", "/lib/security/cacerts");
+      end case;
+   end Java_Keystores;
+
    --  Can this process write that keystore? Asked by opening it, because the
    --  alternative is inferring it from ownership and mode, and a store may be
    --  unwritable for reasons neither of those shows.
@@ -823,34 +940,104 @@ package body Truststores is
       State       : out Trust_State;
       Message     : out Unbounded_String)
    is
-      Keytool : constant String := Locate ("keytool");
-      Alias   : constant String := Fingerprint_Alias (Fingerprint);
-      Keystore : constant String :=
-        Setting (Set_Java_Keystore, Java_Variable, "TRUSTSTORES_JAVA_KEYSTORE");
-      Ran     : Boolean := False;
-      Success : Boolean := False;
+      Keytool   : constant String := Locate ("keytool");
+      Alias     : constant String := Fingerprint_Alias (Fingerprint);
+      Keystores : Java_Keystore_List;
+      Count     : Natural;
+      Failures  : Natural := 0;
+      Denials   : Natural := 0;
+      Combined  : Unbounded_String;
 
-      --  Whichever keystore this operation is about, named once.
-      function Target_Keystore return String is
-        (if Keystore = "" then Default_Java_Keystore (Keytool) else Keystore);
+      procedure Note (Text : String) is
+      begin
+         if Ada.Strings.Unbounded.Length (Combined) > 0 then
+            Ada.Strings.Unbounded.Append (Combined, "; ");
+         end if;
+         Ada.Strings.Unbounded.Append (Combined, Text);
+      end Note;
 
-      --  A store that will not have us is not a broken store, and only one of
-      --  those is something the caller can do anything about.
-      function Failed_State return Trust_State is
-        (if Keystore_Is_Writable (Target_Keystore)
-         then Error
-         else Permission_Required);
+      --  One keystore's worth of work, so the loop below reads as the aggregate
+      --  it is.
+      procedure Apply_One (Keystore : String) is
+         Ran     : Boolean := False;
+         Present : constant Boolean :=
+           Java_Contains_Certificate (Keytool, Keystore, Alias, Certificate);
+      begin
+         case Operation is
+            when Install =>
+               Run
+                 (Keytool,
+                  [new String'("-importcert"),
+                   new String'("-noprompt"),
+                   new String'("-trustcacerts"),
+                   new String'("-keystore"),
+                   new String'(Keystore),
+                   new String'("-storepass"),
+                   new String'("changeit"),
+                   new String'("-alias"),
+                   new String'(Alias),
+                   new String'("-file"),
+                   new String'(Certificate)],
+                  Ran);
 
-      function Failure_Message (Verb : String) return Unbounded_String is
-        (if Failed_State = Permission_Required
-         then Ada.Strings.Unbounded.To_Unbounded_String
-                ("Java trust store update requires permission for "
-                 & Target_Keystore)
-         else Ada.Strings.Unbounded.To_Unbounded_String
-                (Verb & " Java trust anchor " & Alias));
+               --  Asked of the store, not of the tool: keytool has reported
+               --  success for an import the store did not keep.
+               if Ran
+                 and then not Java_Contains_Certificate
+                                (Keytool, Keystore, Alias, Certificate)
+               then
+                  Ran := False;
+               end if;
+
+               if Ran then
+                  Note ("installed Java trust anchor " & Alias & " in " & Keystore);
+               elsif not Keystore_Is_Writable (Keystore) then
+                  Denials := Denials + 1;
+                  Failures := Failures + 1;
+                  Note
+                    ("Java trust store update requires permission for " & Keystore);
+               else
+                  Failures := Failures + 1;
+                  Note ("failed to install Java trust anchor " & Alias
+                        & " in " & Keystore);
+               end if;
+
+            when Remove =>
+               if not Present then
+                  --  Nothing of ours in this one. Saying "removed" would be a
+                  --  claim about work that never happened.
+                  Note ("no Java trust anchor " & Alias & " in " & Keystore);
+                  return;
+               end if;
+
+               Run
+                 (Keytool,
+                  [new String'("-delete"),
+                   new String'("-keystore"),
+                   new String'(Keystore),
+                   new String'("-storepass"),
+                   new String'("changeit"),
+                   new String'("-alias"),
+                   new String'(Alias)],
+                  Ran);
+
+               if Ran then
+                  Note ("removed Java trust anchor " & Alias & " from " & Keystore);
+               elsif not Keystore_Is_Writable (Keystore) then
+                  Denials := Denials + 1;
+                  Failures := Failures + 1;
+                  Note
+                    ("Java trust store update requires permission for " & Keystore);
+               else
+                  Failures := Failures + 1;
+                  Note ("failed to remove Java trust anchor " & Alias
+                        & " from " & Keystore);
+               end if;
+         end case;
+      end Apply_One;
    begin
-      Success := False;
       State := Error;
+
       if Keytool = "" then
          State := Tool_Missing;
          Message :=
@@ -858,91 +1045,27 @@ package body Truststores is
          return;
       end if;
 
-      case Operation is
-         when Install =>
-            if Keystore = "" then
-               Run
-                 (Keytool,
-                  [new String'("-importcert"),
-                   new String'("-noprompt"),
-                   new String'("-trustcacerts"),
-                   new String'("-cacerts"),
-                   new String'("-storepass"),
-                   new String'("changeit"),
-                   new String'("-alias"),
-                   new String'(Alias),
-                   new String'("-file"),
-                   new String'(Certificate)],
-                  Ran);
-            else
-               Run
-                 (Keytool,
-                  [new String'("-importcert"),
-                   new String'("-noprompt"),
-                   new String'("-trustcacerts"),
-                   new String'("-keystore"),
-                   new String'(Keystore),
-                   new String'("-storepass"),
-                   new String'("changeit"),
-                   new String'("-alias"),
-                   new String'(Alias),
-                   new String'("-file"),
-                   new String'(Certificate)],
-                  Ran);
-            end if;
-            Success := Ran;
-            if Success
-              and then not Java_Contains_Certificate
-                (Keytool, Keystore, Alias, Certificate)
-            then
-               Success := False;
-               Ran := False;
-            end if;
-            State := (if Success then Installed else Failed_State);
-            Message :=
-              (if Success
-               then Ada.Strings.Unbounded.To_Unbounded_String
-                      ("installed Java trust anchor " & Alias)
-               else Failure_Message ("failed to install"));
-         when Remove =>
-            if not Java_Contains_Certificate
-              (Keytool, Keystore, Alias, Certificate)
-            then
-               State := Error;
-               Message :=
-                 Ada.Strings.Unbounded.To_Unbounded_String
-                   ("Java trust anchor fingerprint mismatch; refusing removal");
-               return;
-            elsif Keystore = "" then
-               Run
-                 (Keytool,
-                  [new String'("-delete"),
-                   new String'("-cacerts"),
-                   new String'("-storepass"),
-                   new String'("changeit"),
-                   new String'("-alias"),
-                   new String'(Alias)],
-                  Ran);
-            else
-               Run
-                 (Keytool,
-                  [new String'("-delete"),
-                   new String'("-keystore"),
-                   new String'(Keystore),
-                   new String'("-storepass"),
-                   new String'("changeit"),
-                   new String'("-alias"),
-                   new String'(Alias)],
-                  Ran);
-            end if;
-            Success := Ran;
-            State := (if Success then Installed else Failed_State);
-            Message :=
-              (if Success
-               then Ada.Strings.Unbounded.To_Unbounded_String
-                      ("removed Java trust anchor " & Alias)
-               else Failure_Message ("failed to remove"));
-      end case;
+      Java_Keystores (Keystores, Count);
+
+      if Count = 0 then
+         State := Not_Installed;
+         Message :=
+           Ada.Strings.Unbounded.To_Unbounded_String
+             ("no Java keystore on this host");
+         return;
+      end if;
+
+      --  Every keystore this host has. An anchor in one JDK is not in another,
+      --  and a machine with two of them trusts in one and not the other.
+      for Index in 1 .. Count loop
+         Apply_One (Ada.Strings.Unbounded.To_String (Keystores (Index)));
+      end loop;
+
+      Message := Combined;
+      State :=
+        (if Failures = 0 then Installed
+         elsif Denials = Failures then Permission_Required
+         else Error);
    end Apply_Java;
 
    function NSS_Database return String is
@@ -1848,42 +1971,45 @@ package body Truststores is
    end NSS_Anchors;
 
    function Java_Anchors return Unbounded_String is
-      Keytool  : constant String := Locate ("keytool");
-      Keystore : constant String :=
-        Setting (Set_Java_Keystore, Java_Variable, "TRUSTSTORES_JAVA_KEYSTORE");
-      Output   : Unbounded_String;
-      Ran      : Boolean := False;
+      Keytool   : constant String := Locate ("keytool");
+      Keystores : Java_Keystore_List;
+      Count     : Natural;
+      Result    : Unbounded_String;
    begin
       if Keytool = "" then
          return Ada.Strings.Unbounded.Null_Unbounded_String;
       end if;
 
-      --  keytool dumps a keystore whole, which NSS will not: one spawn.
-      if Keystore = "" then
-         Run_Capture
-           (Keytool,
-            [new String'("-list"),
-             new String'("-rfc"),
-             new String'("-cacerts"),
-             new String'("-storepass"),
-             new String'("changeit")],
-            Ran,
-            Output);
-      else
-         Run_Capture
-           (Keytool,
-            [new String'("-list"),
-             new String'("-rfc"),
-             new String'("-keystore"),
-             new String'(Keystore),
-             new String'("-storepass"),
-             new String'("changeit")],
-            Ran,
-            Output);
-      end if;
+      Java_Keystores (Keystores, Count);
 
-      return (if Ran then Output
-              else Ada.Strings.Unbounded.Null_Unbounded_String);
+      --  Every keystore, because "does this host trust it" is a question about
+      --  the host and not about whichever JDK is first on PATH.
+      for Index in 1 .. Count loop
+         declare
+            Keystore : constant String :=
+              Ada.Strings.Unbounded.To_String (Keystores (Index));
+            Output   : Unbounded_String;
+            Ran      : Boolean := False;
+         begin
+            --  keytool dumps a keystore whole, which certutil will not: one
+            --  spawn each rather than one per anchor.
+            Run_Capture
+              (Keytool,
+               [new String'("-list"),
+                new String'("-rfc"),
+                new String'("-keystore"),
+                new String'(Keystore),
+                new String'("-storepass"),
+                new String'("changeit")],
+               Ran,
+               Output);
+            if Ran then
+               Ada.Strings.Unbounded.Append (Result, Output);
+            end if;
+         end;
+      end loop;
+
+      return Result;
    exception
       when others =>
          return Ada.Strings.Unbounded.Null_Unbounded_String;

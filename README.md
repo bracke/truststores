@@ -101,8 +101,21 @@ one leaves the other untrusted. Ubuntu has shipped Firefox as a snap since
 22.04, which is why looking only at the traditional directory meant installing
 an anchor into nothing and reporting success.
 
-Not yet: enumerating several JDKs -- a machine with more than one gets whichever
-`keytool` is first on PATH.
+Every Java keystore on the host, not one. A machine with two JDKs has two
+stores, and an anchor in java-21's `cacerts` is not in java-17's -- installing
+into whichever `keytool` came first on PATH left the rest untrusting and said
+nothing about it. `/usr/lib/jvm/*`, `/usr/java/*`,
+`/Library/Java/JavaVirtualMachines/*/Contents/Home` and the Windows Java
+directories are searched, deduplicated by resolved path: a distribution fills
+that directory with aliases -- `default-java` and `java-1.21.0-openjdk-amd64`
+are both `java-21-openjdk-amd64`, and on Debian all of them resolve to
+`/etc/ssl/certs/java/cacerts` -- so one anchor is one store, reported once.
+
+A named keystore, passed to `Configure` or given in the environment, is the whole
+answer instead: a caller pointing at one is not asking about the machine.
+
+Not yet: reading a keychain or a machine store has never run, only the Linux
+paths have.
 
 ## Validation
 

@@ -136,8 +136,12 @@ package Truststores is
    --  certificate should ask NSS_Trusts instead.
    function NSS_Anchors return Unbounded_String;
 
-   --  Every anchor a Java keystore holds, concatenated as PEM. The configured
-   --  keystore if there is one, else the JDK's own cacerts.
+   --  Every anchor the host's Java keystores hold, concatenated as PEM.
+   --
+   --  All of them, not one: a machine with two JDKs has two stores and an anchor
+   --  in java-21's cacerts is not in java-17's. A named keystore -- passed to
+   --  Configure or given in the environment -- is the whole answer instead,
+   --  because a caller pointing at one is not asking about the machine.
    function Java_Anchors return Unbounded_String;
 
    --  Does that store hold this certificate? By what the armour holds.

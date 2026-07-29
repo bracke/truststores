@@ -111,18 +111,28 @@ begin
       Java_State : constant Truststores.Trust_State :=
         Truststores.Probe (Truststores.Java_Store);
    begin
+      --  Every answer a probe may give, and no more: available, no tool for it,
+      --  the tool but nothing to write into, or a host this crate has no body
+      --  for. Not_Installed belongs on that list -- a runner with certutil and
+      --  no database is exactly that, which is how a hosted runner arrives and
+      --  what this test first got wrong.
       Check
         (System_State in Truststores.Available | Truststores.Tool_Missing
-           | Truststores.Unsupported,
+           | Truststores.Not_Installed | Truststores.Unsupported,
          "the system store answers a probe: " & System_State'Image);
       Check
         (NSS_State in Truststores.Available | Truststores.Tool_Missing
-           | Truststores.Unsupported,
+           | Truststores.Not_Installed | Truststores.Unsupported,
          "so does NSS: " & NSS_State'Image);
       Check
         (Java_State in Truststores.Available | Truststores.Tool_Missing
-           | Truststores.Unsupported,
+           | Truststores.Not_Installed | Truststores.Unsupported,
          "so does Java: " & Java_State'Image);
+
+      --  And a probe says nothing about what it found: it must not mutate.
+      Check
+        (Truststores.Probe (Truststores.NSS_Store) = NSS_State,
+         "and answers the same way twice");
    end;
 
    --  Configure is what a library takes instead of reading its caller's
@@ -198,6 +208,29 @@ begin
               (Own /= "" and then Truststores.NSS_Trusts (Own),
                "an NSS database holds an anchor it just handed over");
          end;
+      end if;
+   end;
+
+   --  A machine can have several JDKs, and an anchor in one is not in another.
+   --  What the suite can check is that they are counted rather than taken as one,
+   --  and that the aliases a distribution fills that directory with -- default-java
+   --  and java-1.21.0-openjdk-amd64 both being java-21-openjdk-amd64 -- are the
+   --  same store rather than three.
+   declare
+      Java : constant String := To_String (Truststores.Java_Anchors);
+   begin
+      if Java = "" then
+         Skip ("no Java keystore to count");
+      else
+         Check
+           (Truststores.Probe (Truststores.Java_Store) = Truststores.Available,
+            "a host with a keystore says the Java store is available");
+
+         --  Reading twice must agree: discovery resolves and deduplicates, and
+         --  a set that grew between calls would mean it does neither.
+         Check
+           (To_String (Truststores.Java_Anchors)'Length = Java'Length,
+            "and reading the keystores twice returns the same set");
       end if;
    end;
 
