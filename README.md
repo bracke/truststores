@@ -120,6 +120,14 @@ answer instead: a caller pointing at one is not asking about the machine.
 Not yet: reading the NSS and Java stores has only run on Linux -- the system
 store is the one CI exercises everywhere.
 
+## Working on this
+
+`CLAUDE.md` carries the rules that govern a change here, and why each one exists:
+what a caller has to be told rather than left to infer, why an outcome is asked of
+the store rather than taken from the tool, why a library does not read its
+caller's environment, and why every store of each kind is used rather than the
+first one found. `AGENTS.md` points at it.
+
 ## Release gate
 
 ```

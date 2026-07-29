@@ -44,12 +44,28 @@ procedure Check_Truststores is
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
    end Error;
 
+   --  The project_tools requirement helpers report what is wrong and then
+   --  raise, which stops at the first one. A gate is more use when it lists
+   --  everything and then says so: caught here, counted, and the run carries on
+   --  to the end.
    procedure Require_Text
      (Relative_Path : String; Pattern : String; Message : String) is
    begin
       Project_Tools.Files.Require_Contains
         (Root & "/" & Relative_Path, Pattern, Message);
+   exception
+      when Program_Error =>
+         Errors := Errors + 1;
    end Require_Text;
+
+   procedure Require_Files (Paths : Project_Tools.Files.Path_List) is
+   begin
+      Project_Tools.Files.Require_Files
+        (Paths, "required truststores release file missing");
+   exception
+      when Program_Error =>
+         Errors := Errors + 1;
+   end Require_Files;
 
    procedure Require_GNAT_15_Manifest (Relative_Path : String) is
    begin
@@ -155,7 +171,7 @@ begin
    Require_GNAT_15_Manifest ("tests/alire.toml");
    Require_GNAT_15_Manifest ("check_truststores/alire.toml");
 
-   Project_Tools.Files.Require_Files
+   Require_Files
      ([To_Unbounded_String (Root & "/README.md"),
        To_Unbounded_String (Root & "/LICENSE"),
        To_Unbounded_String (Root & "/.gitignore"),
@@ -165,8 +181,10 @@ begin
        To_Unbounded_String (Root & "/docs/platform_evidence.md"),
        To_Unbounded_String (Root & "/tests/alire.toml"),
        To_Unbounded_String (Root & "/tests/truststores_tests.gpr"),
-       To_Unbounded_String (Root & "/.github/workflows/ci.yml")],
-      "required truststores release file missing");
+       To_Unbounded_String (Root & "/.github/workflows/ci.yml"),
+       To_Unbounded_String (Root & "/CLAUDE.md"),
+       To_Unbounded_String (Root & "/AGENTS.md"),
+       To_Unbounded_String (Root & "/CHANGELOG.md")]);
 
    --  The README has to carry the contract, not just the crate name.
    Require_Text
@@ -181,6 +199,18 @@ begin
    Require_Text
      ("README.md", "docs/platform_evidence.md",
       "README must point at the validation record");
+
+   --  The rules an agent or a newcomer would otherwise have to infer from the
+   --  code, and which took six never-working features in devcert to learn.
+   Require_Text
+     ("CLAUDE.md", "Ask the store, not the tool",
+      "CLAUDE.md must carry the rule about verifying against the store");
+   Require_Text
+     ("CLAUDE.md", "does not read its caller's environment",
+      "CLAUDE.md must carry the rule about configuration");
+   Require_Text
+     ("CLAUDE.md", "not the first one found",
+      "CLAUDE.md must carry the rule about every store of each kind");
 
    --  Reading is CI's to prove and mutating is not, so the record has to say
    --  which is which -- and name what nobody has run.
