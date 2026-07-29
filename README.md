@@ -27,6 +27,10 @@ they are tried in that order. macOS keeps them in two keychains and `security`
 is what reads them. Windows has no `certutil` switch that exports the store, so
 PowerShell hands back the bytes.
 
+Only the Linux path has been run. The macOS and Windows implementations are
+written and untested -- see `docs/platform_evidence.md`, which records what has
+been validated and what has not.
+
 `System_Trusts` compares what the armour holds, one anchor at a time. Comparing
 the text would answer about the first certificate in the bundle and nothing
 else.

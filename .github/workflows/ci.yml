@@ -1,0 +1,85 @@
+name: ci
+
+# Builds truststores and runs its suite on Linux, macOS and Windows.
+#
+# A matrix is the point of this crate rather than a precaution: where a host
+# keeps its trust anchors, what reads them, and what a program may do about them
+# is different on each of the three, so a green Linux run says nothing about the
+# other two.
+#
+# What CI cannot do is mutate a real trust store: install and remove need a
+# disposable host and, on two of the three, elevated privileges. Those runs are
+# performed by hand and recorded in docs/platform_evidence.md. What runs here is
+# the reading, the discovery, and the refusals.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      ALIRE_NONINTERACTIVE: "true"
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86_64 macOS: gnat_native=15.2.1 ships no aarch64-darwin binary, so
+        # macos-latest (arm64) cannot resolve the pin.
+        os: [ubuntu-latest, macos-15-intel, windows-latest]
+
+    steps:
+      - name: Check out truststores
+        uses: actions/checkout@v7
+        with:
+          path: truststores
+
+      # hostkit and cryptolib are path pins, so they have to be beside this one.
+      - name: Check out sibling crates (transitive pin closure)
+        uses: bracke/project_tools/.github/actions/checkout-ada-siblings@main
+        with:
+          root: truststores
+
+      - name: Set up Alire
+        uses: alire-project/setup-alire@v6
+        with:
+          toolchain: gnat_native=15.2.1 gprbuild
+
+      - name: Raise the Alire solver timeout
+        # The default is 5 s, and a slow runner with a large graph ships an
+        # INCOMPLETE solution instead of failing: transitive crates go missing
+        # and gprbuild then reports a .gpr that cannot be found.
+        shell: bash
+        run: alr settings --global --set solver.timeout 600
+
+      - name: Build the library
+        shell: bash
+        working-directory: truststores
+        run: alr --non-interactive build
+
+      - name: Build and run the test suite
+        shell: bash
+        working-directory: truststores/tests
+        run: |
+          alr --non-interactive build
+          # Windows names it .exe, and bash will not find the Unix name.
+          if [ -f ./bin/truststores_tests.exe ]; then
+            ./bin/truststores_tests.exe
+          else
+            ./bin/truststores_tests
+          fi
+
+      # Reading is the half a runner can check, and it is worth checking that it
+      # returns something on each host rather than only that it compiles.
+      - name: Report what this runner trusts
+        shell: bash
+        working-directory: truststores/tests
+        run: |
+          if [ -f ./bin/truststores_tests.exe ]; then
+            ./bin/truststores_tests.exe | grep -i "anchors it returns" || true
+          else
+            ./bin/truststores_tests | grep -i "anchors it returns" || true
+          fi

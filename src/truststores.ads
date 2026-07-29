@@ -111,6 +111,12 @@ package Truststores is
    --  system roots keychain, or the machine Root certificate store. What comes
    --  back is one text a verifier can be pointed at.
    --
+   --  Verified on Linux, where the bundle is a file. The macOS and Windows
+   --  paths are written and have never run: nothing here has read a keychain or
+   --  a machine store, and until something has, treat an empty answer on those
+   --  hosts as "not yet known to work" rather than "this host trusts nothing".
+   --  docs/platform_evidence.md is where that changes.
+   --
    --  @return The anchors in PEM, or "" where this host would not say.
    function System_Anchors return Unbounded_String;
 
