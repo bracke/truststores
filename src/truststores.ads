@@ -125,6 +125,25 @@ package Truststores is
    --  itself empty.
    function System_Anchor_Count return Natural;
 
+   --  Every anchor the NSS databases hold, concatenated as PEM.
+   --
+   --  All of them: the shared database Chromium reads, and one per Firefox
+   --  profile -- including a snap's or a flatpak's, which are separate stores
+   --  that happen to belong to the same browser.
+   --
+   --  certutil lists nicknames and exports one certificate at a time, so this
+   --  costs a spawn per anchor. A caller that wants one answer about one
+   --  certificate should ask NSS_Trusts instead.
+   function NSS_Anchors return Unbounded_String;
+
+   --  Every anchor a Java keystore holds, concatenated as PEM. The configured
+   --  keystore if there is one, else the JDK's own cacerts.
+   function Java_Anchors return Unbounded_String;
+
+   --  Does that store hold this certificate? By what the armour holds.
+   function NSS_Trusts (Certificate_PEM : String) return Boolean;
+   function Java_Trusts (Certificate_PEM : String) return Boolean;
+
    --  Does the host's system store hold this certificate?
    --
    --  By what the armour holds, not by name: a certificate is in the store or

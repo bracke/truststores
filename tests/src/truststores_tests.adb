@@ -1,5 +1,6 @@
 with Ada.Command_Line;
 with Ada.Directories;
+with Ada.Environment_Variables;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;  use Ada.Strings.Unbounded;
 with Ada.Text_IO;
@@ -146,6 +147,100 @@ begin
 
          Truststores.Configure;
          Ada.Directories.Delete_Tree (Scratch);
+      end;
+   end if;
+
+   Ada.Text_IO.Put_Line ("truststores: reading the other stores");
+
+   --  A Java keystore dumps whole, so this is one certificate set and a
+   --  membership question that has to agree with it.
+   declare
+      Java : constant String := To_String (Truststores.Java_Anchors);
+   begin
+      if Java = "" then
+         Skip ("no Java keystore on this host to read");
+      else
+         Check
+           (Ada.Strings.Fixed.Index (Java, "-----BEGIN CERTIFICATE-----") /= 0,
+            "a Java keystore reads back as PEM");
+         declare
+            Own : constant String := First_Certificate (Java);
+         begin
+            Check
+              (Own /= "" and then Truststores.Java_Trusts (Own),
+               "and the keystore holds an anchor it just handed over");
+         end;
+         Check
+           (not Truststores.Java_Trusts
+              ("-----BEGIN CERTIFICATE-----" & ASCII.LF
+               & "bm90IGEgY2VydGlmaWNhdGU=" & ASCII.LF
+               & "-----END CERTIFICATE-----" & ASCII.LF),
+            "and not something that is not a certificate");
+      end if;
+   end;
+
+   --  NSS costs a spawn per anchor, so this asks only whether it answers at all
+   --  and whether an answer agrees with itself.
+   declare
+      NSS : constant String := To_String (Truststores.NSS_Anchors);
+   begin
+      if NSS = "" then
+         Skip ("no NSS database on this host with anchors to read");
+      else
+         Check
+           (Truststores.NSS_Database_Count > 0,
+            "the databases it read were discovered:"
+            & Truststores.NSS_Database_Count'Image);
+         declare
+            Own : constant String := First_Certificate (NSS);
+         begin
+            Check
+              (Own /= "" and then Truststores.NSS_Trusts (Own),
+               "an NSS database holds an anchor it just handed over");
+         end;
+      end if;
+   end;
+
+   --  Firefox is packaged three ways on Linux and each confines its profiles to
+   --  its own directory. Relocating the home directory is how a suite can prove
+   --  a snap's profile is found without a snap installed.
+   if Hostkit.Host.Current = Hostkit.Host.Linux then
+      declare
+         Fake : constant String :=
+           Ada.Directories.Compose
+             (Hostkit.Fs.Temp_Directory, "truststores-tests-home");
+         Snap : constant String :=
+           Fake & "/snap/firefox/common/.mozilla/firefox/abc.default";
+         Real_Home : constant String := Hostkit.Fs.Home_Directory;
+         File : Ada.Text_IO.File_Type;
+      begin
+         if Ada.Directories.Exists (Fake) then
+            Ada.Directories.Delete_Tree (Fake);
+         end if;
+         Ada.Directories.Create_Path (Snap);
+         Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Snap & "/cert9.db");
+         Ada.Text_IO.Put_Line (File, "not a database, but named like one");
+         Ada.Text_IO.Close (File);
+
+         Ada.Environment_Variables.Set ("HOME", Fake);
+         Check
+           (Truststores.NSS_Database_Count > 0,
+            "a snap-confined Firefox profile is discovered");
+         declare
+           Found : Boolean := False;
+         begin
+            for Index in 1 .. Truststores.NSS_Database_Count loop
+               if Ada.Strings.Fixed.Index
+                    (Truststores.NSS_Database_Path (Index), "/snap/") /= 0
+               then
+                  Found := True;
+               end if;
+            end loop;
+            Check (Found, "and it is the snap path that was found");
+         end;
+
+         Ada.Environment_Variables.Set ("HOME", Real_Home);
+         Ada.Directories.Delete_Tree (Fake);
       end;
    end if;
 

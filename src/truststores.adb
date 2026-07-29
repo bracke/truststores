@@ -402,10 +402,10 @@ package body Truststores is
       Arguments : Hostkit.String_Vectors.Vector;
       Out_Path  : constant String :=
         Ada.Directories.Compose
-          (Hostkit.Fs.Temp_Directory, "devcert-trust-command.out");
+          (Hostkit.Fs.Temp_Directory, "truststores-command.out");
       Err_Path  : constant String :=
         Ada.Directories.Compose
-          (Hostkit.Fs.Temp_Directory, "devcert-trust-command.err");
+          (Hostkit.Fs.Temp_Directory, "truststores-command.err");
       Outcome   : Hostkit.Process.Process_Outcome;
    begin
       for Item of Args loop
@@ -474,7 +474,13 @@ package body Truststores is
       Arguments : Hostkit.String_Vectors.Vector;
       Out_Path  : constant String :=
         Ada.Directories.Compose
-          (Hostkit.Fs.Temp_Directory, "devcert-trust-capture.out");
+          (Hostkit.Fs.Temp_Directory, "truststores-capture.out");
+      --  Captured and dropped rather than inherited: a certutil that cannot
+      --  find something says so on standard error, and it is this library's
+      --  business what to make of that, not the caller's terminal's.
+      Err_Path  : constant String :=
+        Ada.Directories.Compose
+          (Hostkit.Fs.Temp_Directory, "truststores-capture.err");
       Outcome   : Hostkit.Process.Process_Outcome;
    begin
       for Item of Args loop
@@ -487,7 +493,12 @@ package body Truststores is
           (Program     => Program,
            Arguments   => Arguments,
            Stdout_Path => Out_Path,
+           Stderr_Path => Err_Path,
            Timeout_Ms  => Command_Timeout_Ms);
+
+      if Ada.Directories.Exists (Err_Path) then
+         Ada.Directories.Delete_File (Err_Path);
+      end if;
 
       Output :=
         (if Ada.Directories.Exists (Out_Path)
@@ -949,27 +960,78 @@ package body Truststores is
    --  database under ~/.pki/nssdb -- that one is Chromium's -- and keeps a
    --  cert9.db of its own per profile, so a certificate installed only into the
    --  shared database is trusted by Chromium and by nothing else.
-   function Firefox_Profile_Root return String is
-      --  Where Firefox puts profiles is Firefox's business; where this host
-      --  keeps per-user application data is the host's, and that is the part
-      --  that differs. Asked of hostkit rather than assembled from environment
-      --  variables that may not be set.
+   --  Every place this host might keep Firefox profiles.
+   --
+   --  One path was not enough. A packaged Firefox does not use the traditional
+   --  directory: a snap keeps its profiles under ~/snap/firefox/common, a
+   --  flatpak under ~/.var/app/org.mozilla.firefox, and both are confined so
+   --  they cannot see the other's. Ubuntu has shipped Firefox as a snap since
+   --  22.04, which made ~/.mozilla empty on the commonest desktop there is --
+   --  so a program that looked only at it installed its anchor into nothing and
+   --  reported success.
+   Max_Profile_Roots : constant := 4;
+   type Profile_Root_List is
+     array (1 .. Max_Profile_Roots) of Unbounded_String;
+
+   procedure Firefox_Profile_Roots
+     (Roots : out Profile_Root_List;
+      Count : out Natural)
+   is
       Data : constant String := Hostkit.Fs.Application_Data_Directory;
       Home : constant String := Hostkit.Fs.Home_Directory;
+
+      procedure Add (Path : String) is
+      begin
+         if Path /= "" and then Count < Max_Profile_Roots then
+            Count := Count + 1;
+            Roots (Count) := Ada.Strings.Unbounded.To_Unbounded_String (Path);
+         end if;
+      end Add;
    begin
+      Roots := [others => Ada.Strings.Unbounded.Null_Unbounded_String];
+      Count := 0;
+
       case Hostkit.Host.Current is
          when Hostkit.Host.Windows =>
-            return (if Data = "" then ""
-                    else Data & "\Mozilla\Firefox\Profiles");
+            if Data /= "" then
+               Add (Data & "\Mozilla\Firefox\Profiles");
+            end if;
+
          when Hostkit.Host.MacOS =>
-            return (if Data = "" then ""
-                    else Data & "/Firefox/Profiles");
+            if Data /= "" then
+               Add (Data & "/Firefox/Profiles");
+            end if;
+
          when others =>
             --  Linux keeps Firefox under the home directory, not under the
             --  data directory: ~/.mozilla predates the specification and
             --  Firefox never moved.
-            return (if Home = "" then "" else Home & "/.mozilla/firefox");
+            if Home /= "" then
+               Add (Home & "/.mozilla/firefox");
+               Add (Home & "/snap/firefox/common/.mozilla/firefox");
+               Add (Home & "/.var/app/org.mozilla.firefox/.mozilla/firefox");
+            end if;
       end case;
+   end Firefox_Profile_Roots;
+
+   --  The first root this host actually has, for callers that want one name.
+   function Firefox_Profile_Root return String is
+      Roots : Profile_Root_List;
+      Count : Natural;
+   begin
+      Firefox_Profile_Roots (Roots, Count);
+      for Index in 1 .. Count loop
+         declare
+            Path : constant String :=
+              Ada.Strings.Unbounded.To_String (Roots (Index));
+         begin
+            if Ada.Directories.Exists (Path) then
+               return Path;
+            end if;
+         end;
+      end loop;
+      return (if Count = 0 then ""
+              else Ada.Strings.Unbounded.To_String (Roots (1)));
    end Firefox_Profile_Root;
 
    procedure Add_Database
@@ -996,10 +1058,12 @@ package body Truststores is
      (Databases : out NSS_Database_List;
       Count     : out Natural)
    is
-      Root : constant String := Firefox_Profile_Root;
+      Roots      : Profile_Root_List;
+      Root_Count : Natural;
    begin
       Databases := [others => Ada.Strings.Unbounded.Null_Unbounded_String];
       Count := 0;
+      Firefox_Profile_Roots (Roots, Root_Count);
 
       --  An explicit database is the whole answer: a caller who names one is
       --  pointing at a disposable profile, not asking devcert to go looking.
@@ -1011,42 +1075,53 @@ package body Truststores is
 
       Add_Database (Databases, Count, NSS_Database);
 
-      if Root = "" or else not Ada.Directories.Exists (Root) then
-         return;
-      end if;
-
-      declare
-         Search : Ada.Directories.Search_Type;
-         Item   : Ada.Directories.Directory_Entry_Type;
-      begin
-         Ada.Directories.Start_Search
-           (Search,
-            Directory => Root,
-            Pattern   => "*",
-            Filter    =>
-              [Ada.Directories.Directory     => True,
-               Ada.Directories.Ordinary_File => False,
-               Ada.Directories.Special_File  => False]);
-         while Ada.Directories.More_Entries (Search) loop
-            Ada.Directories.Get_Next_Entry (Search, Item);
-            declare
-               Name : constant String := Ada.Directories.Simple_Name (Item);
-               Path : constant String := Ada.Directories.Full_Name (Item);
-            begin
-               --  A profile is a directory holding cert9.db; anything else in
-               --  there is not a database and must not be handed to certutil.
-               if Name /= "." and then Name /= ".."
-                 and then Ada.Directories.Exists (Path & "/cert9.db")
-               then
-                  Add_Database (Databases, Count, Path);
-               end if;
-            end;
-         end loop;
-         Ada.Directories.End_Search (Search);
-      exception
-         when others =>
-            null;
-      end;
+      --  Every root, not the first that exists: a machine can have the
+      --  traditional directory and a snap, and each confines Firefox to its
+      --  own. Installing into one leaves the other untrusted.
+      for Index in 1 .. Root_Count loop
+         declare
+            Root : constant String :=
+              Ada.Strings.Unbounded.To_String (Roots (Index));
+         begin
+            if Root /= "" and then Ada.Directories.Exists (Root) then
+               declare
+                  Search : Ada.Directories.Search_Type;
+                  Item   : Ada.Directories.Directory_Entry_Type;
+               begin
+                  Ada.Directories.Start_Search
+                    (Search,
+                     Directory => Root,
+                     Pattern   => "*",
+                     Filter    =>
+                       [Ada.Directories.Directory     => True,
+                        Ada.Directories.Ordinary_File => False,
+                        Ada.Directories.Special_File  => False]);
+                  while Ada.Directories.More_Entries (Search) loop
+                     Ada.Directories.Get_Next_Entry (Search, Item);
+                     declare
+                        Name : constant String :=
+                          Ada.Directories.Simple_Name (Item);
+                        Path : constant String :=
+                          Ada.Directories.Full_Name (Item);
+                     begin
+                        --  A profile is a directory holding cert9.db; anything
+                        --  else in there is not a database and must not be
+                        --  handed to certutil.
+                        if Name /= "." and then Name /= ".."
+                          and then Ada.Directories.Exists (Path & "/cert9.db")
+                        then
+                           Add_Database (Databases, Count, Path);
+                        end if;
+                     end;
+                  end loop;
+                  Ada.Directories.End_Search (Search);
+               exception
+                  when others =>
+                     null;
+               end;
+            end if;
+         end;
+      end loop;
    end Discover_NSS_Databases;
 
    function NSS_Database_Count return Natural is
@@ -1611,6 +1686,221 @@ package body Truststores is
          return Ada.Strings.Unbounded.Null_Unbounded_String;
    end System_Anchors;
 
+   --  Whether a PEM text holds this certificate, one armoured block at a time.
+   --  Comparing the whole text would answer about the first block and nothing
+   --  after it.
+   function Text_Holds
+     (Anchors : String; Certificate_PEM : String) return Boolean
+   is
+      Mark  : constant String := "-----END CERTIFICATE-----";
+      From  : Positive := Anchors'First;
+      Start : Positive := Anchors'First;
+   begin
+      if Anchors = "" or else Certificate_PEM = "" then
+         return False;
+      end if;
+
+      loop
+         declare
+            Stop : constant Natural :=
+              Ada.Strings.Fixed.Index (Anchors (From .. Anchors'Last), Mark);
+         begin
+            exit when Stop = 0;
+            if Same_Certificate
+                 (Anchors (Start .. Stop + Mark'Length - 1), Certificate_PEM)
+            then
+               return True;
+            end if;
+            exit when Stop + Mark'Length >= Anchors'Last;
+            From := Stop + Mark'Length;
+            Start := From;
+         end;
+      end loop;
+      return False;
+   end Text_Holds;
+
+   function NSS_Anchors return Unbounded_String is
+      Certutil  : constant String := Locate ("certutil");
+      Databases : NSS_Database_List;
+      Count     : Natural;
+      Result    : Unbounded_String;
+      Ran       : Boolean := False;
+   begin
+      if Certutil = "" then
+         return Ada.Strings.Unbounded.Null_Unbounded_String;
+      end if;
+
+      Discover_NSS_Databases (Databases, Count);
+
+      for Index in 1 .. Count loop
+         declare
+            Database : constant String :=
+              Ada.Strings.Unbounded.To_String (Databases (Index));
+            Listing  : Unbounded_String;
+         begin
+            --  The nicknames first: certutil exports by name, and there is no
+            --  switch that dumps a database whole.
+            Run_Capture
+              (Certutil,
+               [new String'("-L"),
+                new String'("-d"),
+                new String'("sql:" & Database)],
+               Ran,
+               Listing);
+
+            if Ran then
+               declare
+                  Text : constant String :=
+                    Ada.Strings.Unbounded.To_String (Listing);
+                  From : Positive := Text'First;
+               begin
+                  while From <= Text'Last loop
+                     declare
+                        Stop : constant Natural :=
+                          Ada.Strings.Fixed.Index
+                            (Text (From .. Text'Last), "" & ASCII.LF);
+                        Line : constant String :=
+                          (if Stop = 0 then Text (From .. Text'Last)
+                           else Text (From .. Stop - 1));
+                        --  Each row is "nickname <trust,flags>", and neither
+                        --  end is fixed: a nickname carries spaces and commas
+                        --  of its own -- "... - Mozilla Corporation" -- and the
+                        --  flags may be separated by one space and followed by
+                        --  several. So: drop the trailing spaces, take the last
+                        --  token as the flags, and accept it only if it looks
+                        --  like flags. That rejects the header and the
+                        --  SSL,S/MIME,JAR/XPI legend beneath it, which an
+                        --  earlier reading turned into a certificate called SSL
+                        --  and asked certutil for by name.
+                        Body_Text : constant String :=
+                          Ada.Strings.Fixed.Trim (Line, Ada.Strings.Right);
+                        Break : constant Natural :=
+                          (if Body_Text = "" then 0
+                           else Ada.Strings.Fixed.Index
+                                  (Body_Text, " ", Ada.Strings.Backward));
+
+                        function Looks_Like_Flags (Value : String) return Boolean is
+                        begin
+                           if Value = ""
+                             or else Value'Length > 12
+                             or else Ada.Strings.Fixed.Index (Value, ",") = 0
+                           then
+                              return False;
+                           end if;
+                           for Item of Value loop
+                              if Item /= ','
+                                and then Item not in 'a' .. 'z'
+                                and then Item not in 'A' .. 'Z'
+                              then
+                                 return False;
+                              end if;
+                           end loop;
+                           return True;
+                        end Looks_Like_Flags;
+                     begin
+                        if Break > Body_Text'First then
+                           declare
+                              Nickname : constant String :=
+                                Ada.Strings.Fixed.Trim
+                                  (Body_Text (Body_Text'First .. Break - 1),
+                                   Ada.Strings.Both);
+                              Flags : constant String :=
+                                Body_Text (Break + 1 .. Body_Text'Last);
+                              Exported : Unbounded_String;
+                              Got      : Boolean := False;
+                           begin
+                              if Nickname /= ""
+                                and then Looks_Like_Flags (Flags)
+                                and then Ada.Strings.Fixed.Index
+                                           (Nickname, "Certificate Nickname") = 0
+                              then
+                                 Run_Capture
+                                   (Certutil,
+                                    [new String'("-L"),
+                                     new String'("-d"),
+                                     new String'("sql:" & Database),
+                                     new String'("-n"),
+                                     new String'(Nickname),
+                                     new String'("-a")],
+                                    Got,
+                                    Exported);
+                                 if Got then
+                                    Ada.Strings.Unbounded.Append
+                                      (Result, Exported);
+                                 end if;
+                              end if;
+                           end;
+                        end if;
+
+                        exit when Stop = 0;
+                        From := Stop + 1;
+                     end;
+                  end loop;
+               end;
+            end if;
+         end;
+      end loop;
+
+      return Result;
+   exception
+      when others =>
+         return Ada.Strings.Unbounded.Null_Unbounded_String;
+   end NSS_Anchors;
+
+   function Java_Anchors return Unbounded_String is
+      Keytool  : constant String := Locate ("keytool");
+      Keystore : constant String :=
+        Setting (Set_Java_Keystore, Java_Variable, "TRUSTSTORES_JAVA_KEYSTORE");
+      Output   : Unbounded_String;
+      Ran      : Boolean := False;
+   begin
+      if Keytool = "" then
+         return Ada.Strings.Unbounded.Null_Unbounded_String;
+      end if;
+
+      --  keytool dumps a keystore whole, which NSS will not: one spawn.
+      if Keystore = "" then
+         Run_Capture
+           (Keytool,
+            [new String'("-list"),
+             new String'("-rfc"),
+             new String'("-cacerts"),
+             new String'("-storepass"),
+             new String'("changeit")],
+            Ran,
+            Output);
+      else
+         Run_Capture
+           (Keytool,
+            [new String'("-list"),
+             new String'("-rfc"),
+             new String'("-keystore"),
+             new String'(Keystore),
+             new String'("-storepass"),
+             new String'("changeit")],
+            Ran,
+            Output);
+      end if;
+
+      return (if Ran then Output
+              else Ada.Strings.Unbounded.Null_Unbounded_String);
+   exception
+      when others =>
+         return Ada.Strings.Unbounded.Null_Unbounded_String;
+   end Java_Anchors;
+
+   function NSS_Trusts (Certificate_PEM : String) return Boolean is
+   begin
+      return Text_Holds
+        (Ada.Strings.Unbounded.To_String (NSS_Anchors), Certificate_PEM);
+   end NSS_Trusts;
+
+   function Java_Trusts (Certificate_PEM : String) return Boolean is
+   begin
+      return Text_Holds
+        (Ada.Strings.Unbounded.To_String (Java_Anchors), Certificate_PEM);
+   end Java_Trusts;
+
    function System_Anchor_Count return Natural is
       Text  : constant String :=
         Ada.Strings.Unbounded.To_String (System_Anchors);
@@ -1637,35 +1927,9 @@ package body Truststores is
    end System_Anchor_Count;
 
    function System_Trusts (Certificate_PEM : String) return Boolean is
-      Anchors : constant String :=
-        Ada.Strings.Unbounded.To_String (System_Anchors);
-      Mark    : constant String := "-----END CERTIFICATE-----";
-      From    : Positive := Anchors'First;
-      Start   : Positive := Anchors'First;
    begin
-      if Anchors = "" or else Certificate_PEM = "" then
-         return False;
-      end if;
-
-      --  One certificate at a time, because a bundle is many and comparing the
-      --  whole text would only ever answer about the first.
-      loop
-         declare
-            Stop : constant Natural :=
-              Ada.Strings.Fixed.Index (Anchors (From .. Anchors'Last), Mark);
-         begin
-            exit when Stop = 0;
-            if Same_Certificate
-                 (Anchors (Start .. Stop + Mark'Length - 1), Certificate_PEM)
-            then
-               return True;
-            end if;
-            exit when Stop + Mark'Length >= Anchors'Last;
-            From := Stop + Mark'Length;
-            Start := From;
-         end;
-      end loop;
-      return False;
+      return Text_Holds
+        (Ada.Strings.Unbounded.To_String (System_Anchors), Certificate_PEM);
    end System_Trusts;
 
 end Truststores;

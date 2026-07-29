@@ -27,6 +27,20 @@ they are tried in that order. macOS keeps them in two keychains and `security`
 is what reads them. Windows has no `certutil` switch that exports the store, so
 PowerShell hands back the bytes.
 
+The other two stores read as well:
+
+```ada
+Truststores.NSS_Anchors    --  every NSS database, including snap and flatpak
+Truststores.Java_Anchors   --  the configured keystore, or the JDK's cacerts
+Truststores.NSS_Trusts (Certificate_PEM)
+Truststores.Java_Trusts (Certificate_PEM)
+```
+
+`keytool` dumps a keystore whole, so Java costs one spawn. NSS has no such
+switch -- certutil lists nicknames and exports one certificate at a time -- so
+reading it costs a spawn per anchor, and a caller with one certificate in mind
+should ask `NSS_Trusts` rather than reading the lot.
+
 Only the Linux path has been run. The macOS and Windows implementations are
 written and untested -- see `docs/platform_evidence.md`, which records what has
 been validated and what has not.
@@ -79,8 +93,16 @@ Absent both, `TRUSTSTORES_LINUX_DIR`, `TRUSTSTORES_NSS_DB` and
 * the JDK's own `cacerts`, found through `JAVA_HOME` or by resolving `keytool`
   through the symlink a distribution puts it behind
 
-Not yet: Firefox under Snap or Flatpak, which keep their profiles outside the
-usual root, and reading NSS or Java stores rather than the system one.
+Firefox is packaged three ways on Linux and each confines its profiles to its
+own directory: `~/.mozilla/firefox`, `~/snap/firefox/common/.mozilla/firefox`,
+`~/.var/app/org.mozilla.firefox/.mozilla/firefox`. All three are searched, and
+all of them that exist are used -- a machine can have two, and installing into
+one leaves the other untrusted. Ubuntu has shipped Firefox as a snap since
+22.04, which is why looking only at the traditional directory meant installing
+an anchor into nothing and reporting success.
+
+Not yet: enumerating several JDKs -- a machine with more than one gets whichever
+`keytool` is first on PATH.
 
 ## Validation
 
