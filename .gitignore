@@ -1,0 +1,15 @@
+# Alire-generated local state
+/alire/
+/config/
+/tests/alire/
+/tests/config/
+
+# Build outputs
+/obj/
+/lib/
+/bin/
+/tests/obj/
+/tests/bin/
+
+*.ali
+*.o

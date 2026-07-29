@@ -1,0 +1,34 @@
+name = "truststores"
+description = "Read and mutate the certificate authorities a host trusts"
+version = "0.1.0-dev"
+
+authors = ["Bent Bracke"]
+maintainers = ["Bent Bracke <bent@bracke.dk>"]
+maintainers-logins = ["bracke"]
+licenses = "MIT"
+website = "https://github.com/bracke/truststores"
+tags = ["ada", "tls", "certificates", "trust", "x509"]
+project-files = ["truststores.gpr"]
+
+# Where a host keeps its trust anchors, and how a program is allowed to touch
+# them, differs because the host differs: an anchor directory and a refresh
+# command on Linux, a keychain on macOS, a certificate store on Windows.
+[[depends-on]]
+hostkit = "*"
+
+[[pins]]
+hostkit = { path = "../hostkit" }
+
+# What the armour holds decides whether an anchor is the one being looked for.
+# Comparing the text does not answer it.
+[[depends-on]]
+cryptolib = "*"
+
+[[pins]]
+cryptolib = { path = "../cryptolib" }
+
+[[depends-on]]
+gnat_native = "=15.2.1"
+
+[build-profiles]
+"*" = "development"

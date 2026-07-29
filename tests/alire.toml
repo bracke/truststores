@@ -1,0 +1,28 @@
+name = "truststores_tests"
+description = "Standalone testsuite for the truststores crate"
+version = "0.1.0-dev"
+authors = ["Bent Bracke"]
+maintainers = ["Bent Bracke <bent@bracke.dk>"]
+maintainers-logins = ["bracke"]
+licenses = "MIT"
+executables = ["truststores_tests"]
+
+[[depends-on]]
+gnat_native = "=15.2.1"
+
+[[depends-on]]
+truststores = "*"
+
+[[pins]]
+truststores = { path = ".." }
+
+# truststores pins these itself, but Alire honours pins only in the root crate,
+# so the root that builds them has to name them too.
+[[pins]]
+hostkit = { path = "../../hostkit" }
+
+[[pins]]
+cryptolib = { path = "../../cryptolib" }
+
+[build-profiles]
+"*" = "development"
