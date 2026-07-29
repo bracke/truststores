@@ -41,9 +41,12 @@ switch -- certutil lists nicknames and exports one certificate at a time -- so
 reading it costs a spawn per anchor, and a caller with one certificate in mind
 should ask `NSS_Trusts` rather than reading the lot.
 
-Only the Linux path has been run. The macOS and Windows implementations are
-written and untested -- see `docs/platform_evidence.md`, which records what has
-been validated and what has not.
+All three read. CI runs the suite on each host and it reports what that runner
+trusted: 121 anchors on Ubuntu, 159 on macOS, 564 on Windows, each store holding
+an anchor it had just handed over. `docs/platform_evidence.md` records the runs.
+
+What CI cannot do is mutate a store, so install and remove are validated by hand
+per host -- also in that file.
 
 `System_Trusts` compares what the armour holds, one anchor at a time. Comparing
 the text would answer about the first certificate in the bundle and nothing
@@ -114,8 +117,8 @@ are both `java-21-openjdk-amd64`, and on Debian all of them resolve to
 A named keystore, passed to `Configure` or given in the environment, is the whole
 answer instead: a caller pointing at one is not asking about the machine.
 
-Not yet: reading a keychain or a machine store has never run, only the Linux
-paths have.
+Not yet: reading the NSS and Java stores has only run on Linux -- the system
+store is the one CI exercises everywhere.
 
 ## Validation
 

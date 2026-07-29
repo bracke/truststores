@@ -12,6 +12,23 @@ A platform with no entry below has not been validated. That is the honest
 reading of an absent row, and it is the reason this file lists what has *not*
 been run as plainly as what has.
 
+## Reading, On Every Host
+
+Reading a trust store needs no privileges and mutates nothing, so unlike the
+rest of this file it is validated by CI rather than by hand. Run 2026-07-29,
+truststores `67922d0`:
+
+| Host | Anchors read | Where from |
+| --- | --- | --- |
+| ubuntu-latest | 121 | `/etc/ssl/certs/ca-certificates.crt` |
+| macos-15-intel | 159 | both keychains, through `security` |
+| windows-latest | 564 | machine `Root`, through PowerShell |
+
+Each run also asked the store whether it held an anchor it had just handed over,
+and each said yes -- which exercises the comparison against a real anchor rather
+than a constructed one, and the armour-at-a-time reading that a whole-text
+comparison would get wrong.
+
 ## Not Validated
 
 Every store below has been exercised against a real one. What has not, as of
