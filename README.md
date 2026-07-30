@@ -70,6 +70,64 @@ Removal is fingerprint-authoritative and verified by reading the store back.
 `certutil` on Windows exits zero having deleted nothing when it is handed a
 SHA-256, so the exit status is not what the answer rests on.
 
+## Choosing a store
+
+A caller that takes a store name from a user -- an option, a configuration file
+-- parses it here rather than matching strings of its own:
+
+```ada
+if Truststores.Target_From_Name (Value, Target) then ...
+if Truststores.Selection_From_Text ("nss,system", Selection) then ...
+```
+
+`Target_From_Name` takes one name. `Selection_From_Text` takes a comma-separated
+list and fills a `Store_Selection`, which holds up to `Max_Selected_Stores` of
+them; `Default_Selection` is what to use when the caller was given nothing.
+
+The accepted names are not a list to copy. `Store_Name_Count` and `Store_Name`
+report them, so an error message offering the choices, or a document claiming to
+list them, can be written from the library rather than from memory:
+
+```ada
+for Index in 1 .. Truststores.Store_Name_Count loop
+   Put_Line ("  " & Truststores.Store_Name (Index));
+end loop;
+```
+
+`system` resolves to whichever system store this host has --
+`Detect_Default_Target` is what decides that -- and the store can also be named
+directly. `Kind_From_Name` parses the three kinds rather than the targets, and
+`Target_For` maps a kind onto the target this host would use for it.
+
+`Name` renders a target or a kind back to the name it was parsed from, and
+`State_Image` renders a `Trust_State`. Both exist so that a caller printing a
+result and a caller parsing an argument agree about the spelling.
+
+## Asking before acting
+
+Nothing here has to be attempted to be understood.
+
+`Probe` reports what a store would do without touching it: `Tool_Missing` where
+the tool it needs is absent, `Unsupported` where this host has no such store,
+`Available` where it could be used. It is what a `doctor` command is built from.
+
+`Plan` describes an operation in one line -- "install linux system trust for
+`<fingerprint>` using `<certificate>`" -- for a caller that wants to say what it
+is about to do, or to show it under a dry run.
+
+Where a store is is answerable too. `NSS_Database_Count` and `NSS_Database_Path`
+name every NSS database that would be acted on, which is how a caller reports an
+anchor that landed nowhere. `Firefox_Profile_Root` gives the first profile
+directory that exists; `Firefox_Profile_Root_Count` and
+`Firefox_Profile_Root_Candidate` give every directory that would be searched,
+asked per host rather than about this one, so a document describing all of them
+can be generated anywhere. `System_Anchor_Count` counts what the system store
+holds without concatenating it.
+
+`Fingerprint_Alias` derives the alias an anchor is stored under from its
+fingerprint. A caller inspecting a store with the platform's own tool needs the
+same spelling this library used.
+
 ## Configuration
 
 A library does not read its caller's environment. An application with

@@ -192,6 +192,77 @@ begin
    Require_Text
      ("README.md", "System_Anchors",
       "README must document the reading side");
+   --  Every public subprogram named in the README.
+   --
+   --  Nineteen of twenty-seven were not, which is how a library ends up with a
+   --  reading section and no mention of how a caller chooses which store to
+   --  read. This does not judge what is written about them -- it cannot -- only
+   --  that adding to the interface means saying what the addition is for.
+   declare
+      Spec : constant String :=
+        Project_Tools.Files.Read_Raw_File (Root & "/src/truststores.ads");
+      Doc  : constant String :=
+        Project_Tools.Files.Read_Raw_File (Root & "/README.md");
+      From : Positive := Spec'First;
+      Seen : Unbounded_String;
+   begin
+      while From <= Spec'Last loop
+         declare
+            Line_End : constant Natural :=
+              Project_Tools.Text.Index (Spec (From .. Spec'Last), "" & ASCII.LF);
+            Line     : constant String :=
+              Spec (From .. (if Line_End = 0 then Spec'Last else Line_End - 1));
+         begin
+            --  Declared at package level: three spaces, then the keyword. A
+            --  nested one is not part of the interface.
+            for Keyword of Project_Tools.Files.Path_List'
+                             ([To_Unbounded_String ("   function "),
+                               To_Unbounded_String ("   procedure ")])
+            loop
+               declare
+                  Head : constant String := To_String (Keyword);
+               begin
+                  if Line'Length > Head'Length
+                    and then Line (Line'First .. Line'First + Head'Length - 1) = Head
+                  then
+                     declare
+                        Rest : constant String :=
+                          Line (Line'First + Head'Length .. Line'Last);
+                        Stop : Natural := Rest'First;
+                     begin
+                        while Stop <= Rest'Last
+                          and then (Rest (Stop) in 'A' .. 'Z'
+                                    or else Rest (Stop) in 'a' .. 'z'
+                                    or else Rest (Stop) in '0' .. '9'
+                                    or else Rest (Stop) = '_')
+                        loop
+                           Stop := Stop + 1;
+                        end loop;
+
+                        declare
+                           Named : constant String := Rest (Rest'First .. Stop - 1);
+                        begin
+                           if Named /= ""
+                             and then Project_Tools.Text.Index
+                                        (To_String (Seen), " " & Named & " ") = 0
+                           then
+                              Append (Seen, " " & Named & " ");
+                              if Project_Tools.Text.Index (Doc, Named) = 0 then
+                                 Error
+                                   ("README must say what " & Named & " is for");
+                              end if;
+                           end if;
+                        end;
+                     end;
+                  end if;
+               end;
+            end loop;
+            exit when Line_End = 0;
+            From := Line_End + 1;
+         end;
+      end loop;
+   end;
+
    --  The README names the directories Firefox profiles are searched for.
    --  Asking the library which ones it searches is what keeps that list true:
    --  it said "all three are searched" while there were four, because the
