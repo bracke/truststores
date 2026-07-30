@@ -51,8 +51,9 @@ Every store below has been exercised against a real one. What has not, as of
   confinement, the space in `Application Support`, a backslash under `APPDATA`)
   are exercised where they belong. What has not happened is an anchor installed
   into a browser's own profile there and Firefox accepting it.
-* **`update-ca-trust` and `trust anchor` under SELinux enforcing.** The Fedora
-  container ran permissive.
+* **`trust anchor` under SELinux enforcing.** `update-ca-trust` is validated
+  enforcing below; the third backend is not reachable on Fedora, which ships
+  `update-ca-trust`, so the two conditions have not been met at once.
 
 ## Linux System Store
 
@@ -156,7 +157,38 @@ anchors in the bundle, ours among them by fingerprint, absent after `uninstall`
 -- to confirm this did not disturb the store that already worked.
 
 
-## macOS System Store
+### SELinux enforcing, 2026-07-30
+
+A container could not answer this: it shares the host kernel, and the host runs
+AppArmor. A Fedora 44 Cloud VM under QEMU/KVM can, and it comes up
+`Enforcing` with the `targeted` policy. Fedora ships `update-ca-trust`, so the
+backend under test is that one.
+
+| | |
+| --- | --- |
+| Guest | Fedora Linux 44 (Cloud Edition), glibc 2.43 |
+| SELinux | `Enforcing`, loaded policy `targeted` |
+| Backend | `update-ca-trust` (`update-ca-certificates` absent) |
+
+```
+install    system=installed: installed linux trust anchor for 0e:9a:be:33...   exit 0
+  label    unconfined_u:object_r:cert_t:s0  devcert-0e9abe33....crt
+  bundle   present in /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem (148 anchors)
+uninstall  system=removed:   removed linux trust anchor for 0e:9a:be:33...
+  bundle   absent; /etc/pki/ca-trust/source/anchors/ empty
+unprivileged
+           system=permission-required: ... requires permission for /etc/pki/... exit 7
+AVC denials across all of it: 0
+```
+
+Nothing was found wrong, which is worth saying plainly rather than leaving as an
+absence. The label is the part that could have been: an atomic write that stages
+in `/tmp` and renames into place carries `tmp_t` across, and a file of that type
+in the anchors directory is one the next reader is denied. The anchor came out
+`cert_t`, because the staging happens inside the destination directory and the
+file inherits the type of the directory it was created in. Enforcing SELinux
+does not change what this library does; it would have punished a shortcut that
+is not there.
 
 | | |
 | --- | --- |
