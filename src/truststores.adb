@@ -576,9 +576,74 @@ package body Truststores is
    --  The NSS certutil, or "" where the only one on this host belongs to
    --  somebody else.
    function NSS_Certutil return String is
-      Tool : constant String := Locate ("certutil");
+      use type Hostkit.Host.Kind;
+
+      Windows   : constant Boolean := Hostkit.Host.Current = Hostkit.Host.Windows;
+      Separator : constant Character := (if Windows then ';' else ':');
+
+      --  Locate answers with the first certutil on PATH, and on Windows that
+      --  is System32's, which belongs to Microsoft. Stopping there would report
+      --  no NSS tool on a host that has one -- installing NSS and appending its
+      --  directory to PATH is the ordinary way to get it, and leaves
+      --  Microsoft's in front. So every entry is tried, in order, and the first
+      --  certutil that answers as NSS's is the one.
+      function Scan (Directories : String) return String is
+         From : Positive := Directories'First;
+      begin
+         while From <= Directories'Last loop
+            declare
+               Stop : Natural := Ada.Strings.Fixed.Index
+                                   (Directories (From .. Directories'Last),
+                                    [1 => Separator]);
+            begin
+               if Stop = 0 then
+                  Stop := Directories'Last + 1;
+               end if;
+
+               if Stop > From then
+                  declare
+                     Folder : constant String := Directories (From .. Stop - 1);
+                     Names  : constant array (1 .. 2) of Unbounded_String :=
+                       [Ada.Strings.Unbounded.To_Unbounded_String ("certutil"),
+                        Ada.Strings.Unbounded.To_Unbounded_String
+                          ("certutil.exe")];
+                  begin
+                     for Name of Names loop
+                        declare
+                           Candidate : constant String :=
+                             Folder & "/" & Ada.Strings.Unbounded.To_String (Name);
+                        begin
+                           if Ada.Directories.Exists (Candidate)
+                             and then Is_NSS_Certutil (Candidate)
+                           then
+                              return Candidate;
+                           end if;
+                        exception
+                           --  A PATH entry that names something unreadable is
+                           --  not this library's problem; the next one might be.
+                           when others =>
+                              null;
+                        end;
+                     end loop;
+                  end;
+               end if;
+               From := Stop + 1;
+            end;
+         end loop;
+         return "";
+      end Scan;
+
+      First : constant String := Locate ("certutil");
    begin
-      return (if Is_NSS_Certutil (Tool) then Tool else "");
+      --  The common case, and one spawn: whatever PATH found first is usually
+      --  the only certutil there is, and on every host but Windows it is NSS's.
+      if Is_NSS_Certutil (First) then
+         return First;
+      end if;
+
+      return (if Ada.Environment_Variables.Exists ("PATH")
+              then Scan (Ada.Environment_Variables.Value ("PATH"))
+              else "");
    end NSS_Certutil;
 
    --  Asked of cryptolib, which owns PEM. Comparing scrubbed text here treated
