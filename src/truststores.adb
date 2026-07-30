@@ -1252,16 +1252,23 @@ package body Truststores is
    type Profile_Root_List is
      array (1 .. Max_Profile_Roots) of Unbounded_String;
 
-   procedure Firefox_Profile_Roots
-     (Roots : out Profile_Root_List;
+   --  The paths, once, with the host-dependent prefix left as a mark. Two
+   --  callers need them and need them differently: the one that acts wants
+   --  this host's real directories, and the one that describes wants text a
+   --  reader recognises for a host that is not this one. Writing the list
+   --  twice is how the flatpak path came to be documented as a directory
+   --  Firefox does not use.
+   Home_Mark : constant String := "{home}";
+   Data_Mark : constant String := "{appdata}";
+
+   procedure Profile_Root_Templates
+     (Host  : Host_Kind;
+      Roots : out Profile_Root_List;
       Count : out Natural)
    is
-      Data : constant String := Hostkit.Fs.Application_Data_Directory;
-      Home : constant String := Hostkit.Fs.Home_Directory;
-
       procedure Add (Path : String) is
       begin
-         if Path /= "" and then Count < Max_Profile_Roots then
+         if Count < Max_Profile_Roots then
             Count := Count + 1;
             Roots (Count) := Ada.Strings.Unbounded.To_Unbounded_String (Path);
          end if;
@@ -1270,48 +1277,124 @@ package body Truststores is
       Roots := [others => Ada.Strings.Unbounded.Null_Unbounded_String];
       Count := 0;
 
-      case Hostkit.Host.Current is
-         when Hostkit.Host.Windows =>
-            if Data /= "" then
-               Add (Data & "\Mozilla\Firefox\Profiles");
-            end if;
+      case Host is
+         when Windows =>
+            Add (Data_Mark & "\Mozilla\Firefox\Profiles");
 
-         when Hostkit.Host.MacOS =>
-            if Data /= "" then
-               Add (Data & "/Firefox/Profiles");
-            end if;
+         when MacOS =>
+            Add (Data_Mark & "/Firefox/Profiles");
 
-         when others =>
+         when Linux =>
             --  Linux keeps Firefox under the home directory rather than under
             --  the data directory, because ~/.mozilla predates the
             --  specification. It is not the only place any more.
-            if Home /= "" then
-               Add (Home & "/.mozilla/firefox");
-               Add (Home & "/snap/firefox/common/.mozilla/firefox");
-               Add (Home & "/.var/app/org.mozilla.firefox/.mozilla/firefox");
+            Add (Home_Mark & "/.mozilla/firefox");
+            Add (Home_Mark & "/snap/firefox/common/.mozilla/firefox");
+            Add (Home_Mark & "/.var/app/org.mozilla.firefox/.mozilla/firefox");
 
-               --  Where the Flathub Firefox actually puts them. A flatpak
-               --  gives the application its own XDG_CONFIG_HOME
-               --  (~/.var/app/<id>/config), and Firefox 153 writes profiles
-               --  there rather than into the ~/.mozilla the sandbox also
-               --  offers it. Checked on this host: profiles.ini and a cert9.db
-               --  Firefox itself created sit under config/mozilla/firefox,
-               --  and .mozilla/firefox does not exist at all. Guessing which
-               --  of the two a build uses is what the earlier list did.
-               Add (Home
-                    & "/.var/app/org.mozilla.firefox/config/mozilla/firefox");
+            --  Where the Flathub Firefox actually puts them. A flatpak gives
+            --  the application its own XDG_CONFIG_HOME and Firefox 153 writes
+            --  profiles there rather than into the ~/.mozilla the sandbox also
+            --  offers it; a snap gives the application its own HOME and leaves
+            --  XDG_CONFIG_HOME alone, so Firefox falls back to ~/.mozilla
+            --  inside it. Confinement is not what decides the layout.
+            Add (Home_Mark
+                 & "/.var/app/org.mozilla.firefox/config/mozilla/firefox");
 
-               --  A snap does not do the same thing, which was worth finding
-               --  out rather than guessing at: the same Firefox, 153, keeps
-               --  its profiles under snap/firefox/common/.mozilla/firefox --
-               --  the path already listed above -- and has no config/mozilla
-               --  at all. A snap gives the application its own HOME and leaves
-               --  XDG_CONFIG_HOME alone, so Firefox falls back to ~/.mozilla
-               --  inside it; a flatpak sets XDG_CONFIG_HOME, and Firefox
-               --  honours it. Confinement is not what decides the layout;
-               --  which variable is set is.
-            end if;
+         when Other =>
+            null;
       end case;
+   end Profile_Root_Templates;
+
+   function This_Host return Host_Kind is
+      use type Hostkit.Host.Kind;
+   begin
+      return
+        (case Hostkit.Host.Current is
+            when Hostkit.Host.Linux   => Linux,
+            when Hostkit.Host.MacOS   => MacOS,
+            when Hostkit.Host.Windows => Windows,
+            when others               => Other);
+   end This_Host;
+
+   function Firefox_Profile_Root_Count (Host : Host_Kind) return Natural is
+      Roots : Profile_Root_List;
+      Count : Natural;
+   begin
+      Profile_Root_Templates (Host, Roots, Count);
+      return Count;
+   end Firefox_Profile_Root_Count;
+
+   function Firefox_Profile_Root_Candidate
+     (Host : Host_Kind; Index : Positive) return String
+   is
+      Roots : Profile_Root_List;
+      Count : Natural;
+   begin
+      Profile_Root_Templates (Host, Roots, Count);
+      return
+        (if Index > Count then ""
+         else Ada.Strings.Unbounded.To_String (Roots (Index)));
+   end Firefox_Profile_Root_Candidate;
+
+   procedure Firefox_Profile_Roots
+     (Roots : out Profile_Root_List;
+      Count : out Natural)
+   is
+      Data      : constant String := Hostkit.Fs.Application_Data_Directory;
+      Home      : constant String := Hostkit.Fs.Home_Directory;
+      Templates : Profile_Root_List;
+      Total     : Natural;
+      Kept      : Natural := 0;
+
+      --  A mark this host cannot fill in leaves no path, rather than one
+      --  beginning with the mark itself.
+      function Filled (Template : String; Ok : out Boolean) return String is
+         Mark : constant Natural :=
+           Ada.Strings.Fixed.Index (Template, Home_Mark);
+      begin
+         Ok := True;
+         if Mark /= 0 then
+            if Home = "" then
+               Ok := False;
+               return "";
+            end if;
+            return Home
+              & Template (Mark + Home_Mark'Length .. Template'Last);
+         end if;
+
+         declare
+            Spot : constant Natural :=
+              Ada.Strings.Fixed.Index (Template, Data_Mark);
+         begin
+            if Spot /= 0 then
+               if Data = "" then
+                  Ok := False;
+                  return "";
+               end if;
+               return Data
+                 & Template (Spot + Data_Mark'Length .. Template'Last);
+            end if;
+         end;
+         return Template;
+      end Filled;
+   begin
+      Roots := [others => Ada.Strings.Unbounded.Null_Unbounded_String];
+      Profile_Root_Templates (This_Host, Templates, Total);
+
+      for Index in 1 .. Total loop
+         declare
+            Ok   : Boolean;
+            Path : constant String :=
+              Filled (Ada.Strings.Unbounded.To_String (Templates (Index)), Ok);
+         begin
+            if Ok and then Path /= "" then
+               Kept := Kept + 1;
+               Roots (Kept) := Ada.Strings.Unbounded.To_Unbounded_String (Path);
+            end if;
+         end;
+      end loop;
+      Count := Kept;
    end Firefox_Profile_Roots;
 
    --  The first root this host actually has, for callers that want one name.

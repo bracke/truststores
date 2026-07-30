@@ -66,6 +66,24 @@ package Truststores is
    --  has to ask rather than assume.
    function Firefox_Profile_Root return String;
 
+   --  Every directory a Firefox profile could be under, whether or not one is
+   --  there. Firefox_Profile_Root answers with the first that exists, which is
+   --  what a caller acting on a profile wants and no use to a caller that has
+   --  to say where this library looks: documentation listing those paths, or a
+   --  doctor reporting where an anchor did not land.
+   --
+   --  Asked per host rather than about this one, so a document describing all
+   --  of them can be generated anywhere. The paths use the separator of the
+   --  host named, not of the host asking, and the home directory of a host
+   --  other than this one is written as a placeholder rather than guessed.
+   type Host_Kind is (Linux, MacOS, Windows, Other);
+
+   function Firefox_Profile_Root_Count (Host : Host_Kind) return Natural;
+
+   --  @param Index in 1 .. Firefox_Profile_Root_Count (Host); "" outside that.
+   function Firefox_Profile_Root_Candidate
+     (Host : Host_Kind; Index : Positive) return String;
+
    --  The NSS databases devcert would act on: the shared one Chromium reads
    --  under ~/.pki/nssdb, plus one per Firefox profile, which reads no other.
    --  TRUSTSTORES_NSS_DB names one instead of all of them.
