@@ -1183,11 +1183,15 @@ package body Truststores is
                Add (Home
                     & "/.var/app/org.mozilla.firefox/config/mozilla/firefox");
 
-               --  The same shape for a snap, inferred rather than seen: no
-               --  snapd on the host this was found on. Costs a directory that
-               --  is not there; missing it costs an anchor installed into
-               --  nothing.
-               Add (Home & "/snap/firefox/common/.config/mozilla/firefox");
+               --  A snap does not do the same thing, which was worth finding
+               --  out rather than guessing at: the same Firefox, 153, keeps
+               --  its profiles under snap/firefox/common/.mozilla/firefox --
+               --  the path already listed above -- and has no config/mozilla
+               --  at all. A snap gives the application its own HOME and leaves
+               --  XDG_CONFIG_HOME alone, so Firefox falls back to ~/.mozilla
+               --  inside it; a flatpak sets XDG_CONFIG_HOME, and Firefox
+               --  honours it. Confinement is not what decides the layout;
+               --  which variable is set is.
             end if;
       end case;
    end Firefox_Profile_Roots;

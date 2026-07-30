@@ -47,10 +47,9 @@ Every store below has been exercised against a real one. What has not, as of
 
 * **A real Firefox on macOS or Windows.** The profile root each host keeps them
   under is walked by the suite on that host -- a directory holding a `cert9.db`
-  is staged under a relocated home, so the paths that differ (a snap's
-  confinement, the space in `Application Support`, a backslash under `APPDATA`)
-  are exercised where they belong. What has not happened is an anchor installed
-  into a browser's own profile there and Firefox accepting it.
+  is staged under a relocated home, so the paths that differ (the space in
+  `Application Support`, a backslash under `APPDATA`) are exercised where they
+  belong. The snap case is no longer one of these: see below.
 * **`trust anchor` under SELinux enforcing.** `update-ca-trust` is validated
   enforcing below; the third backend is not reachable on Fedora, which ships
   `update-ca-trust`, so the two conditions have not been met at once.
