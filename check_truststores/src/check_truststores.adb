@@ -202,15 +202,19 @@ begin
 
    --  The rules an agent or a newcomer would otherwise have to infer from the
    --  code, and which took six never-working features in devcert to learn.
+   --
+   --  Required of AGENTS.md, which is where they live: it is the file every AI
+   --  coding tool reads, and CLAUDE.md imports it so Claude Code sees the same
+   --  text. Checking CLAUDE.md would now check the import stub.
    Require_Text
-     ("CLAUDE.md", "Ask the store, not the tool",
-      "CLAUDE.md must carry the rule about verifying against the store");
+     ("AGENTS.md", "Ask the store, not the tool",
+      "AGENTS.md must carry the rule about verifying against the store");
    Require_Text
-     ("CLAUDE.md", "does not read its caller's environment",
-      "CLAUDE.md must carry the rule about configuration");
+     ("AGENTS.md", "does not read its caller's environment",
+      "AGENTS.md must carry the rule about configuration");
    Require_Text
-     ("CLAUDE.md", "not the first one found",
-      "CLAUDE.md must carry the rule about every store of each kind");
+     ("AGENTS.md", "not the first one found",
+      "AGENTS.md must carry the rule about every store of each kind");
 
    --  Reading is CI's to prove and mutating is not, so the record has to say
    --  which is which -- and name what nobody has run.
