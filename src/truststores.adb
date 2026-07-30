@@ -75,24 +75,72 @@ package body Truststores is
       end case;
    end State_Image;
 
+   --  The names, once. Target_From_Name reads this table and so does
+   --  Store_Name, because an if-chain is a list only the compiler can see: a
+   --  caller wanting to say which names are accepted had to write them out
+   --  again, and "mac" and "win" went undocumented for exactly that reason.
+   type Name_Binding is record
+      Name   : Unbounded_String;
+      Target : Trust_Target;
+   end record;
+
+   function Bound (Text : String; Target : Trust_Target) return Name_Binding is
+     (Name   => Ada.Strings.Unbounded.To_Unbounded_String (Text),
+      Target => Target);
+
+   --  "system" is not among them: it names whatever this host's system store
+   --  turns out to be, which is a question for Detect_Default_Target and not a
+   --  fixed target. Store_Name reports it first all the same, because a caller
+   --  listing what it accepts has to say it.
+   System_Name : constant String := "system";
+
+   Bindings : constant array (1 .. 6) of Name_Binding :=
+     [Bound ("linux", Linux),
+      Bound ("nss", NSS),
+      Bound ("java", Java),
+      Bound ("macos", MacOS),
+      Bound ("mac", MacOS),
+      Bound ("windows", Windows)];
+
+   --  Kept out of the table above only because the array is fixed-length; it
+   --  belongs to the same list and Store_Name reports it.
+   Win_Name : constant String := "win";
+
+   function Store_Name_Count return Natural is
+     (Bindings'Length + 2);
+
+   function Store_Name (Index : Positive) return String is
+   begin
+      if Index = 1 then
+         return System_Name;
+      elsif Index = Store_Name_Count then
+         return Win_Name;
+      elsif Index - 1 in Bindings'Range then
+         return Ada.Strings.Unbounded.To_String (Bindings (Index - 1).Name);
+      else
+         return "";
+      end if;
+   end Store_Name;
+
    function Target_From_Name (Value : String; Target : out Trust_Target) return Boolean is
    begin
-      if Value = "system" then
+      if Value = System_Name then
          Target := Detect_Default_Target;
-      elsif Value = "linux" then
-         Target := Linux;
-      elsif Value = "nss" then
-         Target := NSS;
-      elsif Value = "java" then
-         Target := Java;
-      elsif Value = "macos" or else Value = "mac" then
-         Target := MacOS;
-      elsif Value = "windows" or else Value = "win" then
-         Target := Windows;
-      else
-         return False;
+         return True;
       end if;
-      return True;
+
+      if Value = Win_Name then
+         Target := Windows;
+         return True;
+      end if;
+
+      for Item of Bindings loop
+         if Value = Ada.Strings.Unbounded.To_String (Item.Name) then
+            Target := Item.Target;
+            return True;
+         end if;
+      end loop;
+      return False;
    end Target_From_Name;
 
    function Kind_From_Name

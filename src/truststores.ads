@@ -51,6 +51,16 @@ package Truststores is
    function Name (Kind : Trust_Store_Kind) return String;
    function State_Image (State : Trust_State) return String;
    function Target_From_Name (Value : String; Target : out Trust_Target) return Boolean;
+
+   --  Every name Target_From_Name accepts, so a caller can say what it will
+   --  take rather than describe it from memory: an error message listing the
+   --  choices, or a document that has to stay true. "mac" and "win" were
+   --  accepted and undocumented for as long as both lists were written by
+   --  hand.
+   function Store_Name_Count return Natural;
+
+   --  @param Index in 1 .. Store_Name_Count; "" outside that.
+   function Store_Name (Index : Positive) return String;
    function Kind_From_Name
      (Value : String;
       Kind  : out Trust_Store_Kind) return Boolean;
