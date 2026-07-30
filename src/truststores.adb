@@ -267,6 +267,12 @@ package body Truststores is
       return Hostkit.Process.Locate (Name);
    end Locate;
 
+
+   --  Declared here and written further down, beside Run_Capture, which it
+   --  needs: whether NSS is available is asked above the point where the
+   --  answer can be worked out.
+   function NSS_Certutil return String;
+
    function NSS_Database return String;
    function Detect_Linux_Backend return Linux_System_Backend;
 
@@ -375,7 +381,7 @@ package body Truststores is
                   return Unsupported;
             end case;
          when NSS_Store =>
-            if Locate ("certutil") = "" then
+            if NSS_Certutil = "" then
                return Tool_Missing;
             elsif NSS_Database_Count = 0 then
                return Not_Installed;
@@ -483,7 +489,12 @@ package body Truststores is
      (Program : String;
       Args    : GNAT.OS_Lib.Argument_List;
       Success : out Boolean;
-      Output  : out Unbounded_String)
+      Output  : out Unbounded_String;
+      --  Standard error is normally the tool's complaint about something this
+      --  library already knows, and belongs nowhere. A program asked to
+      --  identify itself is the exception: NSS's certutil prints its help
+      --  there, and that help is the answer.
+      With_Stderr : Boolean := False)
    is
       Arguments : Hostkit.String_Vectors.Vector;
       Out_Path  : constant String :=
@@ -510,23 +521,65 @@ package body Truststores is
            Stderr_Path => Err_Path,
            Timeout_Ms  => Command_Timeout_Ms);
 
+      Output := Ada.Strings.Unbounded.Null_Unbounded_String;
+
       if Ada.Directories.Exists (Err_Path) then
+         if With_Stderr then
+            Ada.Strings.Unbounded.Append (Output, Read_Text_File (Err_Path));
+         end if;
          Ada.Directories.Delete_File (Err_Path);
       end if;
 
-      Output :=
-        (if Ada.Directories.Exists (Out_Path)
-         then Ada.Strings.Unbounded.To_Unbounded_String
-                (Read_Text_File (Out_Path))
-         else Ada.Strings.Unbounded.Null_Unbounded_String);
-
       if Ada.Directories.Exists (Out_Path) then
+         Ada.Strings.Unbounded.Append (Output, Read_Text_File (Out_Path));
          Ada.Directories.Delete_File (Out_Path);
       end if;
 
       Success := Outcome.Started and then not Outcome.Timed_Out
         and then Outcome.Exit_Status = 0;
    end Run_Capture;
+
+   --  Which certutil answered?
+   --
+   --  Windows ships a certutil.exe of its own in System32 -- a different
+   --  program that happens to share the name -- and PATH finds it first. On a
+   --  Windows runner with Firefox installed, `where certutil` returns only
+   --  Microsoft's, and asking Locate whether certutil exists therefore always
+   --  says yes. NSS was reported available, handed arguments Microsoft's tool
+   --  cannot read, and the failure came back as though a browser had refused
+   --  the certificate:
+   --
+   --    nss=error: failed to install NSS trust anchor devcert-32c31d07... in
+   --    C:\Users\...\Mozilla\Firefox\Profiles\ytycz9xq.default-release
+   --
+   --  which names a store, a profile and an anchor, and is wrong about all
+   --  three: nothing refused anything, the program was not the one meant.
+   --
+   --  So ask it. NSS's certutil prints its help on standard error and that
+   --  help says "certdir"; Microsoft's prints a list of verbs and does not.
+   --  The exit status is no use -- NSS's certutil exits non-zero after
+   --  printing help -- so the text is what decides.
+   function Is_NSS_Certutil (Tool : String) return Boolean is
+      Ran    : Boolean := False;
+      Output : Unbounded_String;
+   begin
+      if Tool = "" then
+         return False;
+      end if;
+
+      Run_Capture
+        (Tool, [new String'("-H")], Ran, Output, With_Stderr => True);
+      return Ada.Strings.Fixed.Index
+               (Ada.Strings.Unbounded.To_String (Output), "certdir") /= 0;
+   end Is_NSS_Certutil;
+
+   --  The NSS certutil, or "" where the only one on this host belongs to
+   --  somebody else.
+   function NSS_Certutil return String is
+      Tool : constant String := Locate ("certutil");
+   begin
+      return (if Is_NSS_Certutil (Tool) then Tool else "");
+   end NSS_Certutil;
 
    --  Asked of cryptolib, which owns PEM. Comparing scrubbed text here treated
    --  the armour as noise, so a private key and a certificate whose base64
@@ -1332,7 +1385,7 @@ package body Truststores is
       State       : out Trust_State;
       Message     : out Unbounded_String)
    is
-      Certutil  : constant String := Locate ("certutil");
+      Certutil  : constant String := NSS_Certutil;
       Alias     : constant String := Fingerprint_Alias (Fingerprint);
       Databases : NSS_Database_List;
       Found     : Natural;
@@ -1546,7 +1599,7 @@ package body Truststores is
       --  computed from the certificate below rather than taken from here.
       pragma Unreferenced (Fingerprint);
 
-      Certutil : constant String := Locate ("certutil");
+      Certutil : constant String := NSS_Certutil;
       Ran      : Boolean := False;
       --  What certutil made of it. The message used to say only that the store
       --  was not updated, which is the least useful half of what was known.
@@ -1956,7 +2009,7 @@ package body Truststores is
    end Text_Holds;
 
    function NSS_Anchors return Unbounded_String is
-      Certutil  : constant String := Locate ("certutil");
+      Certutil  : constant String := NSS_Certutil;
       Databases : NSS_Database_List;
       Count     : Natural;
       Result    : Unbounded_String;
