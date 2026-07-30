@@ -60,11 +60,29 @@ Truststores.Apply
    State, Message);
 ```
 
-Every store says what became of it: `installed`, `removed`,
-`permission-required`, `tool-missing`, `partial`, `error`. The distinction
-between a store that refuses an unprivileged caller and a store that is broken
-is the whole of what the caller can act on, and each adapter states its own --
-nothing infers it from the wording of a message.
+Every store says what became of it, and the distinction between a store that
+refuses an unprivileged caller and a store that is broken is the whole of what a
+caller can act on. Each adapter states its own; nothing infers it from the
+wording of a message.
+
+The states are:
+
+* `unsupported` -- this host has no store of that kind
+* `available` -- the store is there and the tool it needs is too, which is what
+  `Probe` reports for a store nothing has been done to yet
+* `installed` -- the store holds the anchor
+* `not-installed` -- the store does not, and that was asked rather than assumed
+* `tool-missing` -- the store may well exist, but the program that edits it is
+  not on this host
+* `permission-required` -- the store refused this caller, which is not the same
+  as being broken and is why it has its own state
+* `partial` -- some of the stores of that kind took the anchor and some did not,
+  which a machine with two Firefox packagings or two JDKs can produce
+* `error` -- something else went wrong, and the message says what
+
+`removed` appears in output and is not one of them: it is how `installed` is
+rendered when the operation was a removal, because an `uninstall` answering
+`installed` reads as the opposite of what happened.
 
 Removal is fingerprint-authoritative and verified by reading the store back.
 `certutil` on Windows exits zero having deleted nothing when it is handed a
@@ -94,9 +112,10 @@ for Index in 1 .. Truststores.Store_Name_Count loop
 end loop;
 ```
 
-`system` resolves to whichever system store this host has --
-`Detect_Default_Target` is what decides that -- and the store can also be named
-directly. `Kind_From_Name` parses the three kinds rather than the targets, and
+The names are `system`, `nss`, `java`, `linux`, `macos`, `windows`, and `mac`
+and `win` as short forms of the last two. `system` resolves to whichever system
+store this host has -- `Detect_Default_Target` is what decides that -- and the
+store can also be named directly. `Kind_From_Name` parses the three kinds rather than the targets, and
 `Target_For` maps a kind onto the target this host would use for it.
 
 `Name` renders a target or a kind back to the name it was parsed from, and

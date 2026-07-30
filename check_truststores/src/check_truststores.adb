@@ -263,6 +263,40 @@ begin
       end loop;
    end;
 
+   --  The names a caller may pass, and the states it may be handed back.
+   --
+   --  Both were in the code and not in the README: the names not at all, the
+   --  states as five of eight. A caller cannot handle a state it has never been
+   --  told about, and cannot offer a name it does not know is accepted.
+   declare
+      Doc : constant String :=
+        Project_Tools.Files.Read_Raw_File (Root & "/README.md");
+   begin
+      for Index in 1 .. Truststores.Store_Name_Count loop
+         declare
+            Named : constant String := Truststores.Store_Name (Index);
+         begin
+            if Named /= ""
+              and then Project_Tools.Text.Index (Doc, "`" & Named & "`") = 0
+            then
+               Error ("README must name the accepted store name " & Named);
+            end if;
+         end;
+      end loop;
+
+      for Value in Truststores.Trust_State loop
+         declare
+            Shown : constant String := Truststores.State_Image (Value);
+         begin
+            --  Backticked, as the README writes every state. The bare word
+            --  would match "available" in ordinary prose and prove nothing.
+            if Project_Tools.Text.Index (Doc, "`" & Shown & "`") = 0 then
+               Error ("README must explain the state " & Shown);
+            end if;
+         end;
+      end loop;
+   end;
+
    --  The README names the directories Firefox profiles are searched for.
    --  Asking the library which ones it searches is what keeps that list true:
    --  it said "all three are searched" while there were four, because the
