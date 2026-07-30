@@ -1130,7 +1130,7 @@ package body Truststores is
    --  22.04, which made ~/.mozilla empty on the commonest desktop there is --
    --  so a program that looked only at it installed its anchor into nothing and
    --  reported success.
-   Max_Profile_Roots : constant := 4;
+   Max_Profile_Roots : constant := 6;
    type Profile_Root_List is
      array (1 .. Max_Profile_Roots) of Unbounded_String;
 
@@ -1164,13 +1164,30 @@ package body Truststores is
             end if;
 
          when others =>
-            --  Linux keeps Firefox under the home directory, not under the
-            --  data directory: ~/.mozilla predates the specification and
-            --  Firefox never moved.
+            --  Linux keeps Firefox under the home directory rather than under
+            --  the data directory, because ~/.mozilla predates the
+            --  specification. It is not the only place any more.
             if Home /= "" then
                Add (Home & "/.mozilla/firefox");
                Add (Home & "/snap/firefox/common/.mozilla/firefox");
                Add (Home & "/.var/app/org.mozilla.firefox/.mozilla/firefox");
+
+               --  Where the Flathub Firefox actually puts them. A flatpak
+               --  gives the application its own XDG_CONFIG_HOME
+               --  (~/.var/app/<id>/config), and Firefox 153 writes profiles
+               --  there rather than into the ~/.mozilla the sandbox also
+               --  offers it. Checked on this host: profiles.ini and a cert9.db
+               --  Firefox itself created sit under config/mozilla/firefox,
+               --  and .mozilla/firefox does not exist at all. Guessing which
+               --  of the two a build uses is what the earlier list did.
+               Add (Home
+                    & "/.var/app/org.mozilla.firefox/config/mozilla/firefox");
+
+               --  The same shape for a snap, inferred rather than seen: no
+               --  snapd on the host this was found on. Costs a directory that
+               --  is not there; missing it costs an anchor installed into
+               --  nothing.
+               Add (Home & "/snap/firefox/common/.config/mozilla/firefox");
             end if;
       end case;
    end Firefox_Profile_Roots;

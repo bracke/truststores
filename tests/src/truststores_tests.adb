@@ -324,6 +324,62 @@ begin
       end if;
    end;
 
+   --  The Flathub Firefox, which does not keep its profiles where the other
+   --  flatpak candidate says. A flatpak gives the application its own
+   --  XDG_CONFIG_HOME, and Firefox 153 writes into it rather than into the
+   --  ~/.mozilla the sandbox also offers -- so a run against a real one found
+   --  profiles.ini and a cert9.db under config/mozilla/firefox and nothing at
+   --  all under .mozilla/firefox. Linux only: the other two hosts have no
+   --  flatpaks to confine.
+   if Hostkit.Host.Current = Hostkit.Host.Linux then
+      declare
+         Fake : constant String :=
+           Ada.Directories.Compose
+             (Hostkit.Fs.Temp_Directory, "truststores-tests-flatpak-home");
+         Profile : constant String :=
+           Fake
+           & "/.var/app/org.mozilla.firefox/config/mozilla/firefox/abc.default";
+         Mark : constant String := "/.var/app/org.mozilla.firefox/config/";
+         Restore : constant String :=
+           (if Ada.Environment_Variables.Exists ("HOME")
+            then Ada.Environment_Variables.Value ("HOME")
+            else "");
+         File  : Ada.Text_IO.File_Type;
+         Found : Boolean := False;
+      begin
+         if Ada.Directories.Exists (Fake) then
+            Ada.Directories.Delete_Tree (Fake);
+         end if;
+         Ada.Directories.Create_Path (Profile);
+         Ada.Text_IO.Create
+           (File, Ada.Text_IO.Out_File,
+            Ada.Directories.Compose (Profile, "cert9.db"));
+         Ada.Text_IO.Put_Line (File, "not a database, but named like one");
+         Ada.Text_IO.Close (File);
+
+         Ada.Environment_Variables.Set ("HOME", Fake);
+
+         for Index in 1 .. Truststores.NSS_Database_Count loop
+            if Ada.Strings.Fixed.Index
+                 (Truststores.NSS_Database_Path (Index), Mark) /= 0
+            then
+               Found := True;
+            end if;
+         end loop;
+         Check
+           (Found,
+            "a flatpak Firefox profile is discovered where Firefox puts it: "
+            & Mark);
+
+         if Restore = "" then
+            Ada.Environment_Variables.Clear ("HOME");
+         else
+            Ada.Environment_Variables.Set ("HOME", Restore);
+         end if;
+         Ada.Directories.Delete_Tree (Fake);
+      end;
+   end if;
+
    Ada.Text_IO.Put_Line
      ("truststores tests: "
       & (if Failures = 0 then "passed" else Failures'Image & " failed"));
