@@ -7,7 +7,8 @@ maintainers = ["Bent Bracke <bent@bracke.dk>"]
 maintainers-logins = ["bracke"]
 licenses = "MIT"
 website = "https://github.com/bracke/truststores"
-tags = ["ada", "tls", "certificates", "trust", "x509"]
+long-description = "truststores answers two questions a program cannot answer portably: what certificate authorities this machine already trusts, and how to add or remove one without lying about whether it worked. It reads the Linux system bundle, the macOS keychains, the Windows machine Root store, every NSS database including one per Firefox profile under snap and flatpak confinement, and Java keystores; and it installs and removes anchors in each. Every store reports its own outcome, and a store that refuses an unprivileged caller is distinguished from one that is broken, because that difference is the whole of what a caller can act on. Removal is fingerprint-authoritative and verified by reading the store back rather than by trusting the tool's exit status."
+tags = ["tls", "certificates", "trust", "x509", "keychain"]
 project-files = ["truststores.gpr"]
 
 # Where a host keeps its trust anchors, and how a program is allowed to touch
