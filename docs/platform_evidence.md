@@ -34,6 +34,17 @@ comparison would get wrong.
 Every store below has been exercised against a real one. What has not, as of
 2026-07-28:
 
+* **An anchor installed into a real confined Firefox profile.** The paths
+  themselves are no longer in doubt: the suite walks each host's profile root
+  with a staged profile, and the two confined layouts match what Mozilla and the
+  Flathub packaging document --
+  `~/snap/firefox/common/.mozilla/firefox` and
+  `~/.var/app/org.mozilla.firefox/.mozilla/firefox`. That matters because a
+  staged test proves the code finds what it was told to look for, and nothing
+  else: it would pass just as well against a path that no Firefox uses. What
+  remains unrun is installing into a profile a browser made, and watching that
+  browser accept the certificate.
+
 * **A real Firefox on macOS or Windows.** The profile root each host keeps them
   under is walked by the suite on that host -- a directory holding a `cert9.db`
   is staged under a relocated home, so the paths that differ (a snap's
