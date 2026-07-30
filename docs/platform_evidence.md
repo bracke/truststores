@@ -109,11 +109,51 @@ Two bugs, both found here rather than by reasoning:
 * Removal said `removed ... anchor` and exited 0 when nothing of ours was
   there, including immediately after an install that had failed.
 
-Not covered: the third Linux backend. `trust anchor` is only selected where
-neither `update-ca-certificates` nor `update-ca-trust` exists, and Arch -- the
-distribution it was meant for -- ships `update-ca-trust` as well, so that path
-went unexercised again. Whether any distribution reaches it is an open
-question.
+### `trust anchor`, 2026-07-30
+
+The third Linux backend, exercised at last. It is selected only where neither
+`update-ca-certificates` nor `update-ca-trust` exists, and Arch -- the
+distribution it was meant for -- ships `update-ca-trust` too, so the path had
+never run. A container reaches it: `ubuntu:24.04` with `p11-kit` installed and
+`ca-certificates` not, which is a configuration rather than a contrivance -- it
+is the one the backend order describes.
+
+Both operations were wrong, in the direction that matters.
+
+```
+install    system=error: linux trust refresh failed        exit 6
+  but:     trust list --filter=ca-anchors -> devcert-local-development-ca
+```
+
+p11-kit stores the anchor and then runs
+`/usr/libexec/p11-kit/trust-extract-compat` to rewrite the bundle files. No
+Ubuntu package ships that program -- not `p11-kit`, not `ca-certificates` -- so
+`trust` exits 2 having done the work asked of it. This library believed the exit
+code and called a trusted certificate a failure. `trust anchor --remove` exits 2
+the same way, having removed the anchor.
+
+Underneath that, `System_Anchors` could not have checked even if it had been
+asked: Ubuntu ships `/etc/ssl/certs/ca-certificates.crt` as a zero-length file,
+and the bundle lookup tested whether the path existed rather than whether it
+held anything, so the host read as trusting nothing at all.
+
+Both now ask p11-kit -- `trust extract --format=pem-bundle --filter=ca-anchors`
+works there whatever `trust anchor` exits -- and the store decides. Verified by
+fingerprint from outside this library, against `trust extract`:
+
+```
+install     system=installed: installed linux trust anchor for b2:d5:66:0c...
+  store holds it (independent check): yes
+uninstall   system=removed:   removed linux trust anchor for b2:d5:66:0c...
+  store holds it (independent check): no
+uninstall   system=removed:   no linux trust anchor for 3e:be:5f:48...
+```
+
+That last line is the third case: removing what was never installed says so
+rather than claiming a removal, which the other backends already did. The
+`update-ca-certificates` backend was re-run the same way afterwards -- 121
+anchors in the bundle, ours among them by fingerprint, absent after `uninstall`
+-- to confirm this did not disturb the store that already worked.
 
 
 ## macOS System Store

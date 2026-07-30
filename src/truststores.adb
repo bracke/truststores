@@ -641,6 +641,18 @@ package body Truststores is
                  (Locate ("trust"),
                   [new String'("anchor"), new String'(Certificate)],
                   Ran);
+
+               --  p11-kit stores the anchor and then runs a compat extractor
+               --  to rewrite the bundle files. Debian and Ubuntu ship no such
+               --  extractor -- no package provides it -- so trust exits 2
+               --  having done the work asked of it. Believing that exit code
+               --  reports a failed install of a certificate the host now
+               --  trusts, which is the worse of the two wrong answers. The
+               --  store is the authority, as it is for every other adapter
+               --  here.
+               if not Ran then
+                  Ran := System_Trusts (Read_Text_File (Certificate));
+               end if;
             else
                if Backend = Configured_Anchor_Directory then
                   Ada.Directories.Create_Path (Configured_Linux_Trust_Dir);
@@ -657,16 +669,42 @@ package body Truststores is
             else
                Message :=
                  Ada.Strings.Unbounded.To_Unbounded_String
-                   ("linux trust refresh failed");
+                   (if Backend = Trust_Anchor
+                    then "linux trust anchor failed and the store does not"
+                         & " hold the certificate"
+                    else "linux trust refresh failed");
             end if;
          when Remove =>
             if Backend = Trust_Anchor then
-               Run
-                 (Locate ("trust"),
-                  [new String'("anchor"),
-                   new String'("--remove"),
-                   new String'(Certificate)],
-                  Ran);
+               declare
+                  PEM : constant String := Read_Text_File (Certificate);
+               begin
+                  --  Asked before the removal rather than after it, because
+                  --  afterwards "the store does not hold it" is the same
+                  --  answer whether this removed it or it was never there.
+                  --  The branch below says that difference out loud for the
+                  --  other backends, and it is worth as much here.
+                  if not System_Trusts (PEM) then
+                     Success := True;
+                     State := Installed;
+                     Message :=
+                       Ada.Strings.Unbounded.To_Unbounded_String
+                         ("no linux trust anchor for " & Fingerprint);
+                     return;
+                  end if;
+
+                  Run
+                    (Locate ("trust"),
+                     [new String'("anchor"),
+                      new String'("--remove"),
+                      new String'(Certificate)],
+                     Ran);
+
+                  --  The same exit code, for the same reason, on the way out.
+                  if not Ran then
+                     Ran := not System_Trusts (PEM);
+                  end if;
+               end;
             elsif Ada.Directories.Exists (Target)
               and then Same_Certificate (Read_Text_File (Target), Read_Text_File (Certificate))
             then
@@ -1725,6 +1763,54 @@ package body Truststores is
       return "";
    end Linux_Anchor_Bundle;
 
+   --  The anchors p11-kit holds, asked of p11-kit.
+   --
+   --  A host with p11-kit and no ca-certificates has no bundle file to read.
+   --  That is not an exotic configuration: it is the one where
+   --  Detect_Linux_Backend picks Trust_Anchor, so it is exactly the host whose
+   --  anchors this library most needs to be able to name. Extraction works
+   --  there even though the compat extractor that writes the bundle files is
+   --  the missing piece that sent us down this path.
+   function P11_Kit_Anchors return String is
+      Trust : constant String := Locate ("trust");
+      Path  : constant String :=
+        Ada.Directories.Compose
+          (Hostkit.Fs.Temp_Directory, "truststores-p11-anchors.pem");
+      Ran   : Boolean := False;
+   begin
+      if Trust = "" then
+         return "";
+      end if;
+
+      Run
+        (Trust,
+         [new String'("extract"),
+          new String'("--format=pem-bundle"),
+          new String'("--filter=ca-anchors"),
+          --  Named rather than left to p11-kit, which warns on standard error
+          --  and then picks this itself. A warning is not an answer.
+          new String'("--purpose=server-auth"),
+          new String'("--overwrite"),
+          new String'(Path)],
+         Ran);
+
+      if not Ran or else not Ada.Directories.Exists (Path) then
+         return "";
+      end if;
+
+      declare
+         Text : constant String := Read_Text_File (Path);
+      begin
+         begin
+            Ada.Directories.Delete_File (Path);
+         exception
+            when others =>
+               null;
+         end;
+         return Text;
+      end;
+   end P11_Kit_Anchors;
+
    function System_Anchors return Unbounded_String is
       use type Hostkit.Host.Kind;
       Ran    : Boolean := False;
@@ -1736,12 +1822,18 @@ package body Truststores is
             --  reading it needs no tool and no privileges.
             declare
                Bundle : constant String := Linux_Anchor_Bundle;
+               Text   : constant String :=
+                 (if Bundle = "" then "" else Read_Text_File (Bundle));
             begin
-               return
-                 (if Bundle = ""
-                  then Ada.Strings.Unbounded.Null_Unbounded_String
-                  else Ada.Strings.Unbounded.To_Unbounded_String
-                         (Read_Text_File (Bundle)));
+               --  An empty bundle is not an answer, and it is what a host with
+               --  p11-kit and no ca-certificates has: Ubuntu ships
+               --  /etc/ssl/certs/ca-certificates.crt as a zero-length file and
+               --  nothing fills it, because the extractor that would is the
+               --  piece that package does not carry. Testing the path rather
+               --  than the contents reads that host as trusting nothing at
+               --  all. Where there are no bytes, ask p11-kit.
+               return Ada.Strings.Unbounded.To_Unbounded_String
+                        (if Text = "" then P11_Kit_Anchors else Text);
             end;
 
          when Hostkit.Host.MacOS =>
