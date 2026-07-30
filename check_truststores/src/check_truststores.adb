@@ -7,6 +7,8 @@ with Project_Tools.Files;
 with Project_Tools.Processes;
 with Project_Tools.Text;
 
+with Truststores;
+
 --  The release gate for truststores.
 --
 --  Each rule below is here because something went wrong once. A build tree was
@@ -190,6 +192,37 @@ begin
    Require_Text
      ("README.md", "System_Anchors",
       "README must document the reading side");
+   --  The README names the directories Firefox profiles are searched for.
+   --  Asking the library which ones it searches is what keeps that list true:
+   --  it said "all three are searched" while there were four, because the
+   --  fourth was added to the code and the sentence was not.
+   declare
+      README : constant String :=
+        Project_Tools.Files.Read_Raw_File (Root & "/README.md");
+   begin
+      for Index in 1 .. Truststores.Firefox_Profile_Root_Count
+                          (Truststores.Linux)
+      loop
+         declare
+            Template : constant String :=
+              Truststores.Firefox_Profile_Root_Candidate
+                (Truststores.Linux, Index);
+            --  The library writes the home directory as a mark; the README
+            --  writes it as "~", which is what a reader recognises.
+            Mark  : constant String := "{home}";
+            Shown : constant String :=
+              (if Template'Length > Mark'Length
+                 and then Template (Template'First .. Template'First + Mark'Length - 1) = Mark
+               then "~" & Template (Template'First + Mark'Length .. Template'Last)
+               else Template);
+         begin
+            if Project_Tools.Text.Index (README, Shown) = 0 then
+               Error ("README must name the Firefox profile root " & Shown);
+            end if;
+         end;
+      end loop;
+   end;
+
    Require_Text
      ("README.md", "Configure",
       "README must document that configuration is passed in, not read");

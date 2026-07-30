@@ -16,8 +16,17 @@ gnat_native = "=15.2.1"
 [[depends-on]]
 project_tools = "*"
 
+# The README lists the Firefox profile roots. Asking the library which ones it
+# searches is what keeps that list true; it said "all three are searched" while
+# there were four.
+[[depends-on]]
+truststores = "*"
+
 [[pins]]
 project_tools = { path = "../../project_tools" }
+
+[[pins]]
+truststores = { path = ".." }
 
 [build-profiles]
 "*" = "development"

@@ -96,10 +96,15 @@ Absent both, `TRUSTSTORES_LINUX_DIR`, `TRUSTSTORES_NSS_DB` and
 * the JDK's own `cacerts`, found through `JAVA_HOME` or by resolving `keytool`
   through the symlink a distribution puts it behind
 
-Firefox is packaged three ways on Linux and each confines its profiles to its
+Firefox is packaged several ways on Linux and each confines its profiles to its
 own directory: `~/.mozilla/firefox`, `~/snap/firefox/common/.mozilla/firefox`,
-`~/.var/app/org.mozilla.firefox/.mozilla/firefox`. All three are searched, and
-all of them that exist are used -- a machine can have two, and installing into
+`~/.var/app/org.mozilla.firefox/.mozilla/firefox` and
+`~/.var/app/org.mozilla.firefox/config/mozilla/firefox`. A flatpak is listed
+twice because a flatpak gives the application its own `XDG_CONFIG_HOME` and
+Firefox 153 writes profiles into it, while a snap gives the application its own
+`HOME` and leaves `XDG_CONFIG_HOME` alone, so Firefox falls back to `~/.mozilla`
+inside it -- confinement is not what decides the layout. All of them are
+searched, and all of them that exist are used -- a machine can have two, and installing into
 one leaves the other untrusted. Ubuntu has shipped Firefox as a snap since
 22.04, which is why looking only at the traditional directory meant installing
 an anchor into nothing and reporting success.
