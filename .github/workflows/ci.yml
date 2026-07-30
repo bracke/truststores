@@ -86,12 +86,16 @@ jobs:
 
       # Reading is the half a runner can check, and it is worth checking that it
       # returns something on each host rather than only that it compiles.
-      - name: Report what this runner trusts
+      - name: Report what this runner trusts, and what it skipped
         shell: bash
         working-directory: truststores/tests
+        # The skips matter as much as the passes: each one names the tool it
+        # could not find, so a store that goes unread on a host is recorded
+        # rather than merely absent from the output.
         run: |
           if [ -f ./bin/truststores_tests.exe ]; then
-            ./bin/truststores_tests.exe | grep -i "anchors it returns" || true
+            RUN=./bin/truststores_tests.exe
           else
-            ./bin/truststores_tests | grep -i "anchors it returns" || true
+            RUN=./bin/truststores_tests
           fi
+          "$RUN" | grep -iE "anchors it returns|^SKIP" || true

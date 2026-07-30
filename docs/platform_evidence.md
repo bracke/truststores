@@ -37,9 +37,12 @@ Every store below has been exercised against a real one. What has not, as of
 * **The Windows denial path.** A hosted runner is elevated and the restricted
   token will not start there, so `permission-required` and exit 7 on Windows
   have never been produced. The store operations have.
-* **Firefox on macOS and Windows.** NSS profile discovery was validated on
-  Linux; the profile layout differs on the other two and only the Linux one has
-  been walked.
+* **A real Firefox on macOS or Windows.** The profile root each host keeps them
+  under is walked by the suite on that host -- a directory holding a `cert9.db`
+  is staged under a relocated home, so the paths that differ (a snap's
+  confinement, the space in `Application Support`, a backslash under `APPDATA`)
+  are exercised where they belong. What has not happened is an anchor installed
+  into a browser's own profile there and Firefox accepting it.
 * **`update-ca-trust` and `trust anchor` under SELinux enforcing.** The Fedora
   container ran permissive.
 

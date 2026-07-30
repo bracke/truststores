@@ -195,7 +195,12 @@ begin
       NSS : constant String := To_String (Truststores.NSS_Anchors);
    begin
       if NSS = "" then
-         Skip ("no NSS database on this host with anchors to read");
+         Skip ("no NSS anchors to read here -- certutil: "
+               & (if Truststores.Probe (Truststores.NSS_Store)
+                    = Truststores.Tool_Missing
+                  then "not installed"
+                  else "installed, databases:"
+                       & Truststores.NSS_Database_Count'Image));
       else
          Check
            (Truststores.NSS_Database_Count > 0,
@@ -234,48 +239,90 @@ begin
       end if;
    end;
 
-   --  Firefox is packaged three ways on Linux and each confines its profiles to
-   --  its own directory. Relocating the home directory is how a suite can prove
-   --  a snap's profile is found without a snap installed.
-   if Hostkit.Host.Current = Hostkit.Host.Linux then
-      declare
-         Fake : constant String :=
-           Ada.Directories.Compose
-             (Hostkit.Fs.Temp_Directory, "truststores-tests-home");
-         Snap : constant String :=
-           Fake & "/snap/firefox/common/.mozilla/firefox/abc.default";
-         Real_Home : constant String := Hostkit.Fs.Home_Directory;
-         File : Ada.Text_IO.File_Type;
-      begin
+   --  Where this host keeps Firefox profiles, walked rather than assumed.
+   --
+   --  A profile is a directory holding cert9.db, so one can be staged: relocate
+   --  the directory the host reports as home (or as application data on
+   --  Windows), put a file of that name under the root this host is supposed to
+   --  search, and ask. No Firefox is involved, and the paths that differ per
+   --  host -- a snap's confinement, a space in "Application Support", a
+   --  backslash under APPDATA -- are exercised on the host they belong to.
+   declare
+      Fake : constant String :=
+        Ada.Directories.Compose
+          (Hostkit.Fs.Temp_Directory, "truststores-tests-home");
+
+      --  What to relocate, and the root that should then be searched. Windows
+      --  reads APPDATA for application data; the other two build theirs from
+      --  the home directory.
+      Variable : constant String :=
+        (case Hostkit.Host.Current is
+            when Hostkit.Host.Windows => "APPDATA",
+            when others               => "HOME");
+
+      Profile : constant String :=
+        (case Hostkit.Host.Current is
+            when Hostkit.Host.Windows =>
+              Fake & "\Mozilla\Firefox\Profiles\abc.default",
+            when Hostkit.Host.MacOS =>
+              Fake & "/Library/Application Support/Firefox/Profiles/abc.default",
+            when others =>
+              Fake & "/snap/firefox/common/.mozilla/firefox/abc.default");
+
+      --  The part of the path that proves the right root was searched rather
+      --  than some other one that happened to exist.
+      Mark : constant String :=
+        (case Hostkit.Host.Current is
+            when Hostkit.Host.Windows => "Firefox",
+            when Hostkit.Host.MacOS   => "Application Support",
+            when others               => "/snap/");
+
+      Restore : constant String :=
+        (if Ada.Environment_Variables.Exists (Variable)
+         then Ada.Environment_Variables.Value (Variable)
+         else "");
+
+      File  : Ada.Text_IO.File_Type;
+      Found : Boolean := False;
+   begin
+      if Hostkit.Host.Current = Hostkit.Host.Unsupported then
+         Skip ("no body for this host to ask");
+      else
          if Ada.Directories.Exists (Fake) then
             Ada.Directories.Delete_Tree (Fake);
          end if;
-         Ada.Directories.Create_Path (Snap);
-         Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Snap & "/cert9.db");
+         Ada.Directories.Create_Path (Profile);
+         Ada.Text_IO.Create
+           (File, Ada.Text_IO.Out_File,
+            Ada.Directories.Compose (Profile, "cert9.db"));
          Ada.Text_IO.Put_Line (File, "not a database, but named like one");
          Ada.Text_IO.Close (File);
 
-         Ada.Environment_Variables.Set ("HOME", Fake);
+         Ada.Environment_Variables.Set (Variable, Fake);
+
          Check
            (Truststores.NSS_Database_Count > 0,
-            "a snap-confined Firefox profile is discovered");
-         declare
-           Found : Boolean := False;
-         begin
-            for Index in 1 .. Truststores.NSS_Database_Count loop
-               if Ada.Strings.Fixed.Index
-                    (Truststores.NSS_Database_Path (Index), "/snap/") /= 0
-               then
-                  Found := True;
-               end if;
-            end loop;
-            Check (Found, "and it is the snap path that was found");
-         end;
+            "a staged Firefox profile is discovered on this host");
 
-         Ada.Environment_Variables.Set ("HOME", Real_Home);
+         for Index in 1 .. Truststores.NSS_Database_Count loop
+            if Ada.Strings.Fixed.Index
+                 (Truststores.NSS_Database_Path (Index), Mark) /= 0
+            then
+               Found := True;
+            end if;
+         end loop;
+         Check
+           (Found,
+            "and it is the root this host keeps them under: " & Mark);
+
+         if Restore = "" then
+            Ada.Environment_Variables.Clear (Variable);
+         else
+            Ada.Environment_Variables.Set (Variable, Restore);
+         end if;
          Ada.Directories.Delete_Tree (Fake);
-      end;
-   end if;
+      end if;
+   end;
 
    Ada.Text_IO.Put_Line
      ("truststores tests: "
