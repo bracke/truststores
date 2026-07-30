@@ -34,9 +34,6 @@ comparison would get wrong.
 Every store below has been exercised against a real one. What has not, as of
 2026-07-28:
 
-* **The Windows denial path.** A hosted runner is elevated and the restricted
-  token will not start there, so `permission-required` and exit 7 on Windows
-  have never been produced. The store operations have.
 * **A real Firefox on macOS or Windows.** The profile root each host keeps them
   under is walked by the suite on that host -- a directory holding a `cert9.db`
   is staged under a relocated home, so the paths that differ (a snap's
@@ -205,12 +202,32 @@ fixed for the Linux backend before anything had run there either. Removal now
 asks by the hash the store keeps and reads the store back afterwards, because
 the exit status has been wrong about this once already.
 
-Outstanding: the unprivileged case. A hosted runner is already elevated, so the
-denial has to be reached through a restricted token (`runas /trustlevel:0x20000`).
-That does not work on this image: the Secondary Logon service is `STOPPED`, and
-starting it does not help -- `runas` exits 1 and prints nothing, on four
-separate runners. What would close it is an ordinary Windows user account, the
-way the macOS case was closed on a real machine. What is unexercised is therefore the
+The unprivileged case is closed too, on the same runner, 2026-07-30, devcert
+`8022f5e`:
+
+```text
+system=permission-required: Windows trust store update requires permission
+  for the machine Root certificate store
+exit=7
+```
+
+A hosted runner is elevated, so an ordinary user had to be arranged rather than
+found. `runas /trustlevel` cannot do it there -- the Secondary Logon service is
+stopped and starting it does not help -- but the Task Scheduler is always
+running and starts a process as another account without it. A local account with
+no group memberships, granted exactly one privilege (`SeBatchLogonRight`, or a
+task will not start for it), running a command from a file so no quoting is lost
+on the way.
+
+That account can do nothing else: it is not an administrator and holds no right
+over a certificate store, which is what makes the refusal the real one rather
+than a simulated one.
+
+Four attempts, each stopped by something worth writing down: `net user` asks
+whether to continue when a password exceeds fourteen characters and a step with
+no console cannot answer; `schtasks /tr` loses the quotes around a nested command
+line and reads `cmd`'s `/c` as its own; a task will not start without the batch
+logon right; and group membership does not carry it. What is unexercised is therefore the
 reporting -- `permission-required` and exit 7 -- and not the store operations
 themselves. On macOS the equivalent path was exercised on a real machine and the
 two adapters answer the same way.
