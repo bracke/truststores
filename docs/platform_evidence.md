@@ -32,24 +32,12 @@ comparison would get wrong.
 ## Not Validated
 
 Every store below has been exercised against a real one. What has not, as of
-2026-07-28:
+2026-07-30:
 
-* **An anchor installed into a real confined Firefox profile.** The paths
-  themselves are no longer in doubt: the suite walks each host's profile root
-  with a staged profile, and the two confined layouts match what Mozilla and the
-  Flathub packaging document --
-  `~/snap/firefox/common/.mozilla/firefox` and
-  `~/.var/app/org.mozilla.firefox/.mozilla/firefox`. That matters because a
-  staged test proves the code finds what it was told to look for, and nothing
-  else: it would pass just as well against a path that no Firefox uses. What
-  remains unrun is installing into a profile a browser made, and watching that
-  browser accept the certificate.
+* **NSS on a Windows host that has NSS's certutil.** The profile is found and
+  the wrong-certutil confusion is gone, but nothing on a stock Windows image
+  supplies the right tool, so the install itself has never run there.
 
-* **A real Firefox on macOS or Windows.** The profile root each host keeps them
-  under is walked by the suite on that host -- a directory holding a `cert9.db`
-  is staged under a relocated home, so the paths that differ (the space in
-  `Application Support`, a backslash under `APPDATA`) are exercised where they
-  belong. The snap case is no longer one of these: see below.
 * **`trust anchor` under SELinux enforcing.** `update-ca-trust` is validated
   enforcing below; the third backend is not reachable on Fedora, which ships
   `update-ca-trust`, so the two conditions have not been met at once.
@@ -188,6 +176,8 @@ in the anchors directory is one the next reader is denied. The anchor came out
 file inherits the type of the directory it was created in. Enforcing SELinux
 does not change what this library does; it would have punished a shortcut that
 is not there.
+
+## macOS System Store
 
 | | |
 | --- | --- |
@@ -347,6 +337,83 @@ What it does not cover: the databases were disposable ones created for the
 run, not the profiles a person browses with, and no browser was launched
 against the result. It covers the adapter and the certificate NSS will accept,
 not the experience of visiting a site.
+
+### Snap-confined Firefox, 2026-07-30
+
+An Ubuntu 24.04 VM under QEMU/KVM, because a snap wants systemd as PID 1 and
+squashfs mounts. `snap install firefox` gives Firefox 153.0.1 -- the same
+version the Flatpak run used, so the two are comparable.
+
+It settles a guess. After the Flatpak finding, this library had gained
+`~/snap/firefox/common/.config/mozilla/firefox` on inference. Firefox does not
+use it: the snap keeps profiles at `~/snap/firefox/common/.mozilla/firefox`,
+which was already listed, and has no `config/mozilla` at all. A snap gives the
+application its own HOME and leaves `XDG_CONFIG_HOME` alone, so Firefox falls
+back to `~/.mozilla` inside it; a flatpak sets `XDG_CONFIG_HOME` and Firefox
+honours it. Confinement is not what decides the layout. The inferred path was
+removed.
+
+The anchor was then installed into that profile and the browser asked to use
+it, against a page served on localhost with a devcert-issued certificate:
+
+| Snap profile | `vfychain` against it | GET reaching the server | Screenshot |
+| --- | --- | --- | --- |
+| CA absent | `ERROR -8179: issuer is not recognized` | 0 | none |
+| CA installed | `Chain is good!` | 1 | 11417 bytes |
+
+Zero requests is the answer that matters: Firefox ended the handshake rather
+than fetch the page, and fetched it once the anchor was in the database.
+
+Two earlier attempts at that measurement were worthless, and are recorded
+because the shape recurs. The first wrote screenshots to `/tmp`, which snap
+confinement forbids, so both runs produced no file and `cmp` on two missing
+files reported a difference. The second let Firefox keep its cache, so the
+second run was served from it and TLS never happened -- the server logged a
+`304` for a certificate that was no longer trusted.
+
+### A real Firefox on macOS and Windows, 2026-07-30
+
+GitHub's `macos-15-intel` and `windows-latest` images, against a Firefox each
+one installed and started, so the profile and its `cert9.db` are the browser's
+own rather than a staged directory.
+
+macOS had nothing to report, which is why that job asserts. Homebrew's `nss`
+supplies the only `certutil` on the host, and the profile came up under
+`~/Library/Application Support/Firefox/Profiles` -- the path with the space that
+had only ever been exercised staged. `certutil`, asked separately from devcert:
+
+```
+install     nss=installed ... Profiles/4r3b3yro.default-release   exit 0
+              certutil: 1 entry
+uninstall   nss=removed   ... Profiles/4r3b3yro.default-release   exit 0
+              certutil: 0 entries
+```
+
+Windows had. Discovery was never the problem -- the profile was found first try
+under `AppData\Roaming\Mozilla\Firefox\Profiles`. The tool was:
+
+```
+where certutil  ->  C:\Windows\System32\certutil.exe
+certutil -?     ->  Verbs:  -dump -- Dump configuration information
+```
+
+Microsoft's certutil, a different program sharing NSS's name, and the only one a
+Windows runner has. `Availability` asked `Locate ("certutil")` for both stores
+-- right for the machine `Root` store, never right for NSS -- so NSS was
+reported available on any Windows at all, handed arguments Microsoft's tool
+cannot read, and answered `nss=error: failed to install NSS trust anchor
+devcert-32c31d07... in C:\Users\...\Profiles\ytycz9xq.default-release`,
+naming a store, a profile and an anchor and wrong about all three. After asking
+which program answered, the same run says what is true:
+
+```
+install    nss=tool-missing: certutil is not installed   exit 6
+uninstall  nss=tool-missing: certutil is not installed   exit 6
+```
+
+Still unrun on Windows: a host that does have NSS's certutil, where the anchor
+should reach the profile that was found. Nothing on a stock Windows image
+supplies one.
 
 ## Java Keystores
 
