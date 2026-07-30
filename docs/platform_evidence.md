@@ -34,10 +34,6 @@ comparison would get wrong.
 Every store below has been exercised against a real one. What has not, as of
 2026-07-30:
 
-* **NSS on a Windows host that has NSS's certutil.** The profile is found and
-  the wrong-certutil confusion is gone, but nothing on a stock Windows image
-  supplies the right tool, so the install itself has never run there.
-
 * **`trust anchor` under SELinux enforcing.** `update-ca-trust` is validated
   enforcing below; the third backend is not reachable on Fedora, which ships
   `update-ca-trust`, so the two conditions have not been met at once.
@@ -411,9 +407,28 @@ install    nss=tool-missing: certutil is not installed   exit 6
 uninstall  nss=tool-missing: certutil is not installed   exit 6
 ```
 
-Still unrun on Windows: a host that does have NSS's certutil, where the anchor
-should reach the profile that was found. Nothing on a stock Windows image
-supplies one.
+MSYS2 is already on that runner for the mingw import libraries and packages
+`nss`, so the tool the NSS store needs is one package away. With it installed
+the host has both certutils, which is the interesting shape, and devcert was run
+against each `PATH` order:
+
+```
+nss-first        first certutil on PATH: /c/msys64/mingw64/bin/certutil
+                 nss=installed ... Profiles/2uwgd3lp.default-release   exit 0
+                   NSS certutil sees: 1
+                 nss=removed                                            exit 0
+
+system32-first   first certutil on PATH: /c/Windows/System32/certutil
+                 nss=installed ... Profiles/2uwgd3lp.default-release   exit 0
+                   NSS certutil sees: 1
+                 nss=removed                                            exit 0
+```
+
+The second is the one worth having. Microsoft's certutil is what PATH finds
+first -- which is what a host looks like when NSS is installed and its
+directory appended -- and the anchor still reached the profile, confirmed by
+asking NSS's certutil rather than devcert. Answering with the first match alone
+would have reported no tool on that host.
 
 ## Java Keystores
 
