@@ -3,6 +3,7 @@ with Ada.Directories;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Ada.Text_IO;
 
+with Project_Tools.Ada_Source;
 with Project_Tools.Files;
 with Project_Tools.Processes;
 with Project_Tools.Text;
@@ -192,75 +193,42 @@ begin
    Require_Text
      ("README.md", "System_Anchors",
       "README must document the reading side");
-   --  Every public subprogram named in the README.
+   --  Every public subprogram documented on its declaration.
    --
-   --  Nineteen of twenty-seven were not, which is how a library ends up with a
-   --  reading section and no mention of how a caller chooses which store to
-   --  read. This does not judge what is written about them -- it cannot -- only
-   --  that adding to the interface means saying what the addition is for.
+   --  This asked instead that each name appear somewhere in the README, which
+   --  a name can do while nothing is explained -- and which treats the
+   --  specification, where an Ada reader looks first, as not counting.
+   --  Require_Public_GNATdoc_Tags is project_tools' own rule and asks for the
+   --  thing itself: a description, and @param and @return for the profile.
+   --
+   --  Tags precede the declaration in this crate, which is the default.
    declare
-      Spec : constant String :=
-        Project_Tools.Files.Read_Raw_File (Root & "/src/truststores.ads");
-      Doc  : constant String :=
-        Project_Tools.Files.Read_Raw_File (Root & "/README.md");
-      From : Positive := Spec'First;
-      Seen : Unbounded_String;
+      Search       : Ada.Directories.Search_Type;
+      Item         : Ada.Directories.Directory_Entry_Type;
+      Scanned      : Natural := 0;
+      Undocumented : Natural := 0;
    begin
-      while From <= Spec'Last loop
-         declare
-            Line_End : constant Natural :=
-              Project_Tools.Text.Index (Spec (From .. Spec'Last), "" & ASCII.LF);
-            Line     : constant String :=
-              Spec (From .. (if Line_End = 0 then Spec'Last else Line_End - 1));
+      Ada.Directories.Start_Search
+        (Search, Root & "/src", "*.ads",
+         Filter => [Ada.Directories.Ordinary_File => True, others => False]);
+      while Ada.Directories.More_Entries (Search) loop
+         Ada.Directories.Get_Next_Entry (Search, Item);
          begin
-            --  Declared at package level: three spaces, then the keyword. A
-            --  nested one is not part of the interface.
-            for Keyword of Project_Tools.Files.Path_List'
-                             ([To_Unbounded_String ("   function "),
-                               To_Unbounded_String ("   procedure ")])
-            loop
-               declare
-                  Head : constant String := To_String (Keyword);
-               begin
-                  if Line'Length > Head'Length
-                    and then Line (Line'First .. Line'First + Head'Length - 1) = Head
-                  then
-                     declare
-                        Rest : constant String :=
-                          Line (Line'First + Head'Length .. Line'Last);
-                        Stop : Natural := Rest'First;
-                     begin
-                        while Stop <= Rest'Last
-                          and then (Rest (Stop) in 'A' .. 'Z'
-                                    or else Rest (Stop) in 'a' .. 'z'
-                                    or else Rest (Stop) in '0' .. '9'
-                                    or else Rest (Stop) = '_')
-                        loop
-                           Stop := Stop + 1;
-                        end loop;
-
-                        declare
-                           Named : constant String := Rest (Rest'First .. Stop - 1);
-                        begin
-                           if Named /= ""
-                             and then Project_Tools.Text.Index
-                                        (To_String (Seen), " " & Named & " ") = 0
-                           then
-                              Append (Seen, " " & Named & " ");
-                              if Project_Tools.Text.Index (Doc, Named) = 0 then
-                                 Error
-                                   ("README must say what " & Named & " is for");
-                              end if;
-                           end if;
-                        end;
-                     end;
-                  end if;
-               end;
-            end loop;
-            exit when Line_End = 0;
-            From := Line_End + 1;
+            Project_Tools.Ada_Source.Require_Public_GNATdoc_Tags
+              (Spec_Path => Ada.Directories.Full_Name (Item));
+         exception
+            when Program_Error =>
+               Undocumented := Undocumented + 1;
          end;
+         Scanned := Scanned + 1;
       end loop;
+      Ada.Directories.End_Search (Search);
+
+      if Undocumented /= 0 then
+         Error
+           ("GNATdoc tags missing in" & Undocumented'Image & " of"
+            & Scanned'Image & " specs");
+      end if;
    end;
 
    --  The names a caller may pass, and the states it may be handed back.

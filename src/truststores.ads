@@ -26,6 +26,10 @@ package Truststores is
    --                                the host's, with no refresh command run.
    --  @param NSS_Database A single NSS database instead of discovering them.
    --  @param Java_Keystore A keystore file instead of the JDK's own cacerts.
+   --  @param Linux_Directory_Variable Name of the variable to read the Linux
+   --         anchor directory from, when the caller passes none.
+   --  @param NSS_Database_Variable Name of the variable for the NSS database.
+   --  @param Java_Keystore_Variable Name of the variable for the keystore.
    --  The variable names carry the same idea one step further: an application
    --  with its own documented environment -- DEVCERT_NSS_DB, say -- names them
    --  here once, and they are read whenever a store is looked at rather than
@@ -47,9 +51,26 @@ package Truststores is
       Items : Store_Array := [others => System_Store];
    end record;
 
+   --  Render a target, a kind or a state back to the name it is parsed from
+   --  and reported under, so a caller printing a result and a caller reading an
+   --  argument agree about the spelling.
+
+   --  @param Target The target to name.
+   --  @return Its name, as Target_From_Name accepts it.
    function Name (Target : Trust_Target) return String;
+
+   --  @param Kind The kind to name.
+   --  @return Its name, as Kind_From_Name accepts it.
    function Name (Kind : Trust_Store_Kind) return String;
+
+   --  @param State The state to render.
+   --  @return Its name. "removed" is not among them: that is how Installed is
+   --          shown after a removal, and the caller decides it.
    function State_Image (State : Trust_State) return String;
+
+   --  @param Value The name a user gave.
+   --  @param Target The target it names, when it names one.
+   --  @return True when Value is a name this library accepts.
    function Target_From_Name (Value : String; Target : out Trust_Target) return Boolean;
 
    --  Every name Target_From_Name accepts, so a caller can say what it will
@@ -57,23 +78,51 @@ package Truststores is
    --  choices, or a document that has to stay true. "mac" and "win" were
    --  accepted and undocumented for as long as both lists were written by
    --  hand.
+   --
+   --  @return How many names there are.
    function Store_Name_Count return Natural;
 
    --  @param Index in 1 .. Store_Name_Count; "" outside that.
+   --  @return The name at that position.
    function Store_Name (Index : Positive) return String;
+
+   --  @param Value The name a user gave.
+   --  @param Kind The store kind it names, when it names one.
+   --  @return True when Value is a kind this library accepts.
    function Kind_From_Name
      (Value : String;
       Kind  : out Trust_Store_Kind) return Boolean;
+
+   --  @return The system store this host actually has, which is what the name
+   --          "system" resolves to.
    function Detect_Default_Target return Trust_Target;
+
+   --  @return The stores to act on when the caller named none.
    function Default_Selection return Store_Selection;
+
+   --  @param Value A comma-separated list of store names.
+   --  @param Selection The stores it names, when they are all accepted.
+   --  @return True when every name in Value was one this library accepts.
    function Selection_From_Text
      (Value     : String;
       Selection : out Store_Selection) return Boolean;
+
+   --  @param Kind The store kind.
+   --  @return The target this host would use for it.
    function Target_For (Kind : Trust_Store_Kind) return Trust_Target;
+
+   --  What that store would say, without touching it: Tool_Missing where the
+   --  program it needs is absent, Unsupported where this host has no such
+   --  store, Available where it could be used.
+   --
+   --  @param Kind The store kind to ask about.
+   --  @return Its state, unchanged by the asking.
    function Probe (Kind : Trust_Store_Kind) return Trust_State;
    --  Where this host keeps Firefox profiles. Each holding a cert9.db is an
    --  NSS database of its own; the path differs per host, which is why a test
    --  has to ask rather than assume.
+   --
+   --  @return The first such directory that exists, or "" where none does.
    function Firefox_Profile_Root return String;
 
    --  Every directory a Firefox profile could be under, whether or not one is
@@ -88,19 +137,45 @@ package Truststores is
    --  other than this one is written as a placeholder rather than guessed.
    type Host_Kind is (Linux, MacOS, Windows, Other);
 
+   --  @param Host The host to ask about, which need not be this one.
+   --  @return How many directories would be searched there.
    function Firefox_Profile_Root_Count (Host : Host_Kind) return Natural;
 
+   --  @param Host The host to ask about.
    --  @param Index in 1 .. Firefox_Profile_Root_Count (Host); "" outside that.
+   --  @return The directory, with the home part left as a mark for the caller
+   --          to render however its readers expect.
    function Firefox_Profile_Root_Candidate
      (Host : Host_Kind; Index : Positive) return String;
 
    --  The NSS databases devcert would act on: the shared one Chromium reads
    --  under ~/.pki/nssdb, plus one per Firefox profile, which reads no other.
    --  TRUSTSTORES_NSS_DB names one instead of all of them.
+   --
+   --  @return How many databases would be acted on.
    function NSS_Database_Count return Natural;
+
+   --  @param Index in 1 .. NSS_Database_Count; "" outside that.
+   --  @return That database's path, which is what a caller reports when an
+   --          anchor landed nowhere.
    function NSS_Database_Path (Index : Positive) return String;
 
+   --  The name an anchor is stored under, derived from its fingerprint. A
+   --  caller inspecting a store with the platform's own tool needs the same
+   --  spelling this library used.
+   --
+   --  @param Fingerprint The certificate's fingerprint.
+   --  @return The alias, safe to use as a store nickname or file name.
    function Fingerprint_Alias (Fingerprint : String) return String;
+
+   --  What Apply would do, in one line, for a caller that wants to say so
+   --  first -- a dry run, or a prompt before touching a machine's trust.
+   --
+   --  @param Target Which store.
+   --  @param Operation Install or Remove.
+   --  @param Certificate Path to the certificate the operation is about.
+   --  @param Fingerprint Its fingerprint, which names the anchor.
+   --  @return One line describing the operation; it performs nothing.
    function Plan
      (Target      : Trust_Target;
       Operation   : Action;
@@ -110,6 +185,15 @@ package Truststores is
    --  Apply the operation to one store, and say what became of it. The state
    --  is the store's own answer, not an inference from the message: a caller
    --  deciding between "denied" and "broken" must not depend on the wording.
+   --
+   --  @param Target Which store to act on.
+   --  @param Operation Install or Remove.
+   --  @param Certificate Path to the certificate to install or remove.
+   --  @param Fingerprint Its fingerprint; removal is authoritative on it, so a
+   --         store holding a different certificate under the same name is
+   --         refused rather than overwritten.
+   --  @param State What became of that store.
+   --  @param Message What it said, for a person; not for branching on.
    procedure Apply
      (Target      : Trust_Target;
       Operation   : Action;
@@ -118,6 +202,15 @@ package Truststores is
       State       : out Trust_State;
       Message     : out Unbounded_String);
 
+   --  The same across several stores at once, reporting one state for the lot.
+   --
+   --  @param Selection Which stores to act on.
+   --  @param Operation Install or Remove.
+   --  @param Certificate Path to the certificate to install or remove.
+   --  @param Fingerprint Its fingerprint.
+   --  @param State Partial when some stores took it and others did not, which
+   --         is a different answer from every store failing.
+   --  @param Message Each store's own message, joined.
    procedure Apply
      (Selection   : Store_Selection;
       Operation   : Action;
@@ -151,6 +244,8 @@ package Truststores is
    --  How many certificates that text holds. Zero means the store was empty or
    --  could not be read; the two are told apart by whether System_Anchors is
    --  itself empty.
+   --
+   --  @return The number of anchors, without concatenating them.
    function System_Anchor_Count return Natural;
 
    --  Every anchor the NSS databases hold, concatenated as PEM.
@@ -162,6 +257,8 @@ package Truststores is
    --  certutil lists nicknames and exports one certificate at a time, so this
    --  costs a spawn per anchor. A caller that wants one answer about one
    --  certificate should ask NSS_Trusts instead.
+   --
+   --  @return The anchors in PEM, or "" where none could be read.
    function NSS_Anchors return Unbounded_String;
 
    --  Every anchor the host's Java keystores hold, concatenated as PEM.
@@ -170,10 +267,18 @@ package Truststores is
    --  in java-21's cacerts is not in java-17's. A named keystore -- passed to
    --  Configure or given in the environment -- is the whole answer instead,
    --  because a caller pointing at one is not asking about the machine.
+   --
+   --  @return The anchors in PEM, or "" where none could be read.
    function Java_Anchors return Unbounded_String;
 
    --  Does that store hold this certificate? By what the armour holds.
+   --
+   --  @param Certificate_PEM The certificate to look for.
+   --  @return True when the NSS databases hold it.
    function NSS_Trusts (Certificate_PEM : String) return Boolean;
+
+   --  @param Certificate_PEM The certificate to look for.
+   --  @return True when a Java keystore holds it.
    function Java_Trusts (Certificate_PEM : String) return Boolean;
 
    --  Does the host's system store hold this certificate?
@@ -182,6 +287,7 @@ package Truststores is
    --  it is not, whatever the store chose to call it.
    --
    --  @param Certificate_PEM The certificate to look for.
+   --  @return True when the host's system store holds it.
    function System_Trusts (Certificate_PEM : String) return Boolean;
 
 end Truststores;
