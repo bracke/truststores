@@ -7,6 +7,8 @@ with Ada.Text_IO;
 
 with Hostkit.Fs;
 with Hostkit.Host;
+with Hostkit.Process;
+with Hostkit;
 
 with Truststores;
 
@@ -64,6 +66,60 @@ begin
       elsif Anchors = "" then
          --  A host with no anchors at all is a real answer -- a container built
          --  without ca-certificates is exactly that -- and it is not a failure.
+         --
+         --  But it is also what a *broken reader* looks like, and this skip has
+         --  been hiding one: a Windows runner that trusts hundreds of roots
+         --  reports none here, so everything above it fails to reach any TLS
+         --  host at all. So before skipping, say what the reader saw.
+         declare
+            Where : constant String := Hostkit.Process.Locate ("powershell");
+            Args  : Hostkit.String_Vectors.Vector;
+            Ran   : Hostkit.Process.Process_Outcome;
+
+            Out_Path : constant String :=
+              Hostkit.Fs.Join (Hostkit.Fs.Temp_Directory, "anchors-probe.txt");
+         begin
+            Ada.Text_IO.Put_Line
+              ("  probe: powershell at [" & Where & "]");
+
+            if Where /= "" then
+               Args.Append
+                 (Ada.Strings.Unbounded.To_Unbounded_String ("-NoProfile"));
+               Args.Append
+                 (Ada.Strings.Unbounded.To_Unbounded_String ("-Command"));
+               Args.Append
+                 (Ada.Strings.Unbounded.To_Unbounded_String
+                    ("(Get-ChildItem Cert:\LocalMachine\Root " &
+                     "| Measure-Object).Count"));
+
+               Ran := Hostkit.Process.Run_Captured
+                        (Program     => Where,
+                         Arguments   => Args,
+                         Stdout_Path => Out_Path,
+                         Timeout_Ms  => 60_000);
+
+               Ada.Text_IO.Put_Line
+                 ("  probe: started=" & Boolean'Image (Ran.Started)
+                  & " status=" & Integer'Image (Ran.Exit_Status)
+                  & " timed_out=" & Boolean'Image (Ran.Timed_Out));
+
+               if Ada.Directories.Exists (Out_Path) then
+                  declare
+                     File : Ada.Text_IO.File_Type;
+                  begin
+                     Ada.Text_IO.Open (File, Ada.Text_IO.In_File, Out_Path);
+                     while not Ada.Text_IO.End_Of_File (File) loop
+                        Ada.Text_IO.Put_Line
+                          ("  probe: said [" & Ada.Text_IO.Get_Line (File) & "]");
+                     end loop;
+                     Ada.Text_IO.Close (File);
+                  end;
+               else
+                  Ada.Text_IO.Put_Line ("  probe: it wrote no file");
+               end if;
+            end if;
+         end;
+
          Skip ("this host holds no system anchors to read");
       else
          Check (Count > 0, "the anchors it returns are certificates:" & Count'Image);
