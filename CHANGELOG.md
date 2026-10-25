@@ -8,6 +8,12 @@ version.
 
 ## [Unreleased]
 
+### Fixed
+
+- A file another task of the program has open is read and written all the same: GNAT's default
+  open form refuses a file the program already has open (`Use_Error: reopening shared file`);
+  every Open and Create of a file now says `shared=no`.
+
 ### Added
 
 - The suite says what the reader saw before it skips. A host with no system

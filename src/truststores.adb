@@ -515,7 +515,7 @@ package body Truststores is
       File   : Ada.Text_IO.File_Type;
       Result : Unbounded_String;
    begin
-      Ada.Text_IO.Open (File, Ada.Text_IO.In_File, Path);
+      Ada.Text_IO.Open (File, Ada.Text_IO.In_File, Path, Form => "shared=no");
       while not Ada.Text_IO.End_Of_File (File) loop
          Ada.Strings.Unbounded.Append (Result, Ada.Text_IO.Get_Line (File));
          Ada.Strings.Unbounded.Append (Result, ASCII.LF);
@@ -1111,7 +1111,7 @@ package body Truststores is
 
       if Ada.Directories.Exists (Path) then
          Ada.Streams.Stream_IO.Open
-           (File, Ada.Streams.Stream_IO.Append_File, Path);
+           (File, Ada.Streams.Stream_IO.Append_File, Path, Form => "shared=no");
          Ada.Streams.Stream_IO.Close (File);
          return True;
       end if;
@@ -1127,7 +1127,7 @@ package body Truststores is
          end if;
 
          Ada.Streams.Stream_IO.Create
-           (File, Ada.Streams.Stream_IO.Out_File, Probe);
+           (File, Ada.Streams.Stream_IO.Out_File, Probe, Form => "shared=no");
          Ada.Streams.Stream_IO.Close (File);
          Ada.Directories.Delete_File (Probe);
          return True;
